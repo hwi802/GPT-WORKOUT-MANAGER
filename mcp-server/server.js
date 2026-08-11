@@ -2,34 +2,102 @@ import { createServer } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { DatabaseSync } from "node:sqlite";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const MCP_PATH = "/mcp";
 
-const sampleWorkouts = [
-  {
-    id: "sample-2026-07-23",
-    completedAt: "2026-07-23T22:40:00+09:00",
-    exercises: [
-      {
-        name: "Chest Press",
-        sets: [
-          { weight: 25, reps: 10 },
-          { weight: 25, reps: 9 },
-          { weight: 25, reps: 8 },
-        ],
-      },
-      {
-        name: "Assist Pull-up",
-        sets: [
-          { weight: 45, reps: 8 },
-          { weight: 45, reps: 7 },
-          { weight: 45, reps: 6 },
-        ],
-      },
-    ],
-  },
-];
+const currentDirectory = dirname(fileURLToPath(import.meta.url));
+const databasePath = join(
+  currentDirectory,
+  "..",
+  "database",
+  "fitlog.db",
+);
+
+const db = new DatabaseSync(databasePath, {
+  readOnly: true,
+});
+
+const selectRecentWorkoutRows = db.prepare(`
+  WITH recent_workouts AS (
+    SELECT
+      id,
+      completed_at
+    FROM workouts
+    ORDER BY completed_at DESC
+    LIMIT ?
+  )
+  SELECT
+    rw.id AS workout_id,
+    rw.completed_at AS completed_at,
+    e.id AS exercise_id,
+    e.name AS exercise_name,
+    e.exercise_order AS exercise_order,
+    s.id AS set_id,
+    s.set_number AS set_number,
+    s.weight AS weight,
+    s.reps AS reps
+  FROM recent_workouts AS rw
+  LEFT JOIN exercises AS e
+    ON e.workout_id = rw.id
+  LEFT JOIN workout_sets AS s
+    ON s.exercise_id = e.id
+  ORDER BY
+    rw.completed_at DESC,
+    e.exercise_order ASC,
+    s.set_number ASC
+`);
+
+function getRecentWorkouts(limit) {
+  const rows = selectRecentWorkoutRows.all(limit);
+
+  const workouts = [];
+  const workoutsById = new Map();
+  const exercisesById = new Map();
+
+  for (const row of rows) {
+    let workout = workoutsById.get(row.workout_id);
+
+    if (!workout) {
+      workout = {
+        id: row.workout_id,
+        completedAt: row.completed_at,
+        exercises: [],
+      };
+
+      workoutsById.set(row.workout_id, workout);
+      workouts.push(workout);
+    }
+
+    if (row.exercise_id === null) {
+      continue;
+    }
+
+    let exercise = exercisesById.get(row.exercise_id);
+
+    if (!exercise) {
+      exercise = {
+        name: row.exercise_name,
+        sets: [],
+      };
+
+      exercisesById.set(row.exercise_id, exercise);
+      workout.exercises.push(exercise);
+    }
+
+    if (row.set_id !== null) {
+      exercise.sets.push({
+        weight: Number(row.weight),
+        reps: Number(row.reps),
+      });
+    }
+  }
+
+  return workouts;
+}
 
 function createFitLogServer() {
   const server = new McpServer(
@@ -76,7 +144,7 @@ function createFitLogServer() {
       },
     },
     async ({ limit }) => {
-      const workouts = sampleWorkouts.slice(0, limit);
+      const workouts = getRecentWorkouts(limit);
 
       return {
         content: [
