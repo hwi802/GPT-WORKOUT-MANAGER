@@ -13,14 +13,15 @@ const transport = new StreamableHTTPClientTransport(
 try {
   await client.connect(transport);
 
-  const result = await client.callTool({
+  const lookupResult = await client.callTool({
     name: "get_recent_workouts",
     arguments: {
-      limit: 5,
+      limit: 1,
     },
   });
 
-  console.dir(result, {
+  console.log("\n재조회 결과");
+  console.dir(lookupResult, {
     depth: null,
     colors: true,
   });

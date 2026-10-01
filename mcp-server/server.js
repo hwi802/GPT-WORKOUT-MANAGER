@@ -5,6 +5,7 @@ import { z } from "zod";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const MCP_PATH = "/mcp";
@@ -17,9 +18,7 @@ const databasePath = join(
   "fitlog.db",
 );
 
-const db = new DatabaseSync(databasePath, {
-  readOnly: true,
-});
+const db = new DatabaseSync(databasePath);
 
 const selectRecentWorkoutRows = db.prepare(`
   WITH recent_workouts AS (
@@ -49,6 +48,21 @@ const selectRecentWorkoutRows = db.prepare(`
     rw.completed_at DESC,
     e.exercise_order ASC,
     s.set_number ASC
+`);
+
+const insertWorkout = db.prepare(`
+  INSERT INTO workouts (id, completed_at)
+  VALUES (?, ?)
+`);
+
+const insertExercise = db.prepare(`
+  INSERT INTO exercises (workout_id, name, exercise_order)
+  VALUES (?, ?, ?)
+`);
+
+const insertSet = db.prepare(`
+  INSERT INTO workout_sets (exercise_id, set_number, weight, reps)
+  VALUES (?, ?, ?, ?)
 `);
 
 function getRecentWorkouts(limit) {
@@ -97,6 +111,41 @@ function getRecentWorkouts(limit) {
   }
 
   return workouts;
+}
+
+function saveWorkout(completedAt, exercises) {
+  const workoutId = randomUUID();
+
+  db.exec("BEGIN");
+
+  try {
+    insertWorkout.run(workoutId, completedAt);
+
+    for (const [exerciseIndex, exercise] of exercises.entries()) {
+      const exerciseResult = insertExercise.run(
+        workoutId,
+        exercise.name,
+        exerciseIndex + 1,
+      );
+
+      const exerciseId = exerciseResult.lastInsertRowid;
+
+      for (const [setIndex, set] of exercise.sets.entries()) {
+        insertSet.run(
+          exerciseId,
+          setIndex + 1,
+          set.weight,
+          set.reps,
+        );
+      }
+    }
+
+    db.exec("COMMIT");
+    return workoutId;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function createFitLogServer() {
@@ -154,6 +203,51 @@ function createFitLogServer() {
           },
         ],
         structuredContent: { workouts },
+      };
+    },
+  );
+
+  server.registerTool(
+    "save_workout",
+    {
+      title: "운동 기록 저장",
+      description:
+        "사용자가 완료한 운동의 종목, 중량, 반복 횟수를 FitLog에 저장합니다.",
+      inputSchema: {
+        completedAt: z.string(),
+        exercises: z.array(
+          z.object({
+            name: z.string().min(1),
+            sets: z.array(
+              z.object({
+                weight: z.number().min(0),
+                reps: z.number().int().min(1),
+              }),
+            ).min(1),
+          }),
+        ).min(1),
+      },
+      outputSchema: {
+        workoutId: z.string(),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ completedAt, exercises }) => {
+      const workoutId = saveWorkout(completedAt, exercises);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `운동 기록을 저장했습니다. 운동 ID: ${workoutId}`,
+          },
+        ],
+        structuredContent: { workoutId },
       };
     },
   );
