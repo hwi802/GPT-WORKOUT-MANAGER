@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FitLog | 운동 기록</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="brand">FITLOG</p>
+        <h1>나의 운동 기록</h1>
+        <p>지난 운동의 중량과 반복 횟수를 확인하세요.</p>
+      </div>
+      <button id="refresh" type="button">새로고침</button>
+    </header>
+
+    <section class="workout">
+  <h2>운동 기록 추가</h2>
+
+  <form id="workout-form">
+    <label>
+      완료 시각 (한국 시간)
+      <input id="completed-at" type="datetime-local" required>
+    </label>
+
+    <label>
+      운동 종목
+      <input
+        id="exercise-name"
+        type="text"
+        placeholder="예: 체스트프레스"
+        maxlength="100"
+        required
+      >
+    </label>
+
+    <p>세트별 중량과 반복 횟수</p>
+    <div id="set-inputs"></div>
+
+    <div class="form-actions">
+      <button id="add-set" type="button">세트 추가</button>
+      <button id="save-workout" type="submit">운동 저장</button>
+    </div>
+
+    <p id="form-status" role="status"></p>
+  </form>
+</section>
+
+    <p id="status" role="status"></p>
+    <section id="workouts" aria-label="최근 운동 기록"></section>
+  </main>
+</body>
+</html>

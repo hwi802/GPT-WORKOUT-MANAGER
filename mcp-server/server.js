@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const MCP_PATH = "/mcp";
@@ -276,11 +277,164 @@ const httpServer = createServer(async (request, response) => {
     response.end();
     return;
   }
+  const webFiles = {
+    "/": ["index.html", "text/html; charset=utf-8"],
+    "/app.js": ["app.js", "text/javascript; charset=utf-8"],
+    "/styles.css": ["styles.css", "text/css; charset=utf-8"],
+  };
 
-  if (request.method === "GET" && url.pathname === "/") {
-    response
-      .writeHead(200, { "content-type": "text/plain; charset=utf-8" })
-      .end("FitLog MCP server");
+  if (
+    request.method === "GET" &&
+    Object.hasOwn(webFiles, url.pathname)
+  ) {
+    const [fileName, contentType] = webFiles[url.pathname];
+
+    try {
+      const filePath = join(currentDirectory, "..", "app", fileName);
+      const content = await readFile(filePath);
+
+      response.writeHead(200, {
+        "content-type": contentType,
+        "cache-control": "no-store",
+      });
+      response.end(content);
+    } catch (error) {
+      console.error("Web file failed:", error);
+      response.writeHead(500).end("Failed to load page");
+    }
+
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/workouts") {
+    const limit = Number(url.searchParams.get("limit") ?? 10);
+    const headers = {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    };
+
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+      response.writeHead(400, headers).end(
+        JSON.stringify({
+          error: "limit은 1부터 20까지의 정수여야 합니다.",
+        }),
+      );
+      return;
+    }
+
+    try {
+      const workouts = getRecentWorkouts(limit);
+      response.writeHead(200, headers).end(
+        JSON.stringify({ workouts }),
+      );
+    } catch (error) {
+      console.error("Workout API failed:", error);
+      response.writeHead(500, headers).end(
+        JSON.stringify({
+          error: "운동 기록을 조회하지 못했습니다.",
+        }),
+      );
+    }
+
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/workouts") {
+    const headers = {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    };
+
+    // 요청 본문 읽기: 최대 64KB
+    const chunks = [];
+    let size = 0;
+
+    try {
+      for await (const chunk of request) {
+        size += chunk.length;
+
+        if (size > 64 * 1024) {
+          response.writeHead(413, headers).end(
+            JSON.stringify({ error: "입력 데이터가 너무 큽니다." }),
+          );
+          return;
+        }
+
+        chunks.push(chunk);
+      }
+    } catch (error) {
+      console.error("Request body failed:", error);
+
+      if (!response.destroyed) {
+        response.writeHead(400, headers).end(
+          JSON.stringify({ error: "요청을 읽지 못했습니다." }),
+        );
+      }
+      return;
+    }
+
+    // JSON 형식 확인
+    let input;
+
+    try {
+      input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      response.writeHead(400, headers).end(
+        JSON.stringify({ error: "올바른 JSON 형식이 아닙니다." }),
+      );
+      return;
+    }
+
+    // 저장 전 입력값 검사
+    const schema = z.object({
+      completedAt: z.string().refine(
+        (value) =>
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+          Number.isFinite(Date.parse(value)),
+        "시간대가 포함된 유효한 완료 시각이 필요합니다.",
+      ),
+      exercises: z.array(
+        z.object({
+          name: z.string().trim().min(1).max(100),
+          sets: z.array(
+            z.object({
+              weight: z.number().finite().min(0),
+              reps: z.number().int().min(1),
+            }),
+          ).min(1).max(50),
+        }),
+      ).min(1).max(30),
+    });
+
+    const parsed = schema.safeParse(input);
+
+    if (!parsed.success) {
+      response.writeHead(400, headers).end(
+        JSON.stringify({
+          error: "날짜, 종목명, 중량과 반복 횟수를 확인해주세요.",
+        }),
+      );
+      return;
+    }
+
+    // 기존 저장 함수를 재사용
+    try {
+      const workoutId = saveWorkout(
+        parsed.data.completedAt,
+        parsed.data.exercises,
+      );
+
+      response.writeHead(201, headers).end(
+        JSON.stringify({ workoutId }),
+      );
+    } catch (error) {
+      console.error("Workout save API failed:", error);
+
+      response.writeHead(500, headers).end(
+        JSON.stringify({ error: "운동 기록을 저장하지 못했습니다." }),
+      );
+    }
+
     return;
   }
 
