@@ -51,6 +51,14 @@ const selectRecentWorkoutRows = db.prepare(`
     s.set_number ASC
 `);
 
+// 실제 세트 기록이 있는 종목만 중복 없이 가져옵니다.
+const selectExerciseNames = db.prepare(`
+  SELECT DISTINCT TRIM(e.name) AS name
+  FROM exercises AS e
+  WHERE TRIM(e.name) <> ''
+    AND EXISTS (SELECT 1 FROM workout_sets AS s WHERE s.exercise_id = e.id)
+`);
+
 const insertWorkout = db.prepare(`
   INSERT INTO workouts (id, completed_at)
   VALUES (?, ?)
@@ -122,6 +130,18 @@ function saveWorkout(completedAt, exercises) {
   try {
     insertWorkout.run(workoutId, completedAt);
 
+    insertWorkoutExercises(workoutId, exercises);
+
+    db.exec("COMMIT");
+    return workoutId;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+// 종목과 세트 쓰기를 새 기록 저장과 기존 기록 수정에서 공유합니다.
+function insertWorkoutExercises(workoutId, exercises) {
     for (const [exerciseIndex, exercise] of exercises.entries()) {
       const exerciseResult = insertExercise.run(
         workoutId,
@@ -141,8 +161,35 @@ function saveWorkout(completedAt, exercises) {
       }
     }
 
+}
+
+const findWorkout = db.prepare("SELECT id FROM workouts WHERE id = ?");
+const updateWorkoutTime = db.prepare("UPDATE workouts SET completed_at = ? WHERE id = ?");
+const deleteWorkoutSets = db.prepare(`
+  DELETE FROM workout_sets
+  WHERE exercise_id IN (SELECT id FROM exercises WHERE workout_id = ?)
+`);
+const deleteWorkoutExercises = db.prepare("DELETE FROM exercises WHERE workout_id = ?");
+const deleteWorkoutRow = db.prepare("DELETE FROM workouts WHERE id = ?");
+
+function changeWorkout(workoutId, replacement = null) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (!findWorkout.get(workoutId)) {
+      db.exec("ROLLBACK");
+      return false;
+    }
+    // 자식 행부터 처리하므로 외래 키 CASCADE 설정에 의존하지 않습니다.
+    deleteWorkoutSets.run(workoutId);
+    deleteWorkoutExercises.run(workoutId);
+    if (replacement) {
+      updateWorkoutTime.run(replacement.completedAt, workoutId);
+      insertWorkoutExercises(workoutId, replacement.exercises);
+    } else {
+      deleteWorkoutRow.run(workoutId);
+    }
     db.exec("COMMIT");
-    return workoutId;
+    return true;
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
@@ -306,6 +353,25 @@ const httpServer = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/exercises") {
+    const headers = {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    };
+    try {
+      const exercises = selectExerciseNames.all()
+        .map((row) => row.name)
+        .sort((a, b) => a.localeCompare(b, "ko"));
+      response.writeHead(200, headers).end(JSON.stringify({ exercises }));
+    } catch (error) {
+      console.error("Exercise API failed:", error);
+      response.writeHead(500, headers).end(
+        JSON.stringify({ error: "운동 종목을 불러오지 못했습니다." }),
+      );
+    }
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/workouts") {
     const limit = Number(url.searchParams.get("limit") ?? 10);
     const headers = {
@@ -339,7 +405,40 @@ const httpServer = createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/api/workouts") {
+  const workoutMatch = /^\/api\/workouts\/([^/]+)$/.exec(url.pathname);
+  const isUpdate = request.method === "PUT" && workoutMatch !== null;
+  const isDelete = request.method === "DELETE" && workoutMatch !== null;
+  let targetWorkoutId;
+  if (isUpdate || isDelete) {
+    try {
+      targetWorkoutId = decodeURIComponent(workoutMatch[1]);
+      if (!targetWorkoutId || targetWorkoutId.length > 200) throw new Error("Invalid ID");
+    } catch {
+      response.writeHead(400, { "content-type": "application/json; charset=utf-8" })
+        .end(JSON.stringify({ error: "올바르지 않은 운동 기록 ID입니다." }));
+      return;
+    }
+  }
+
+  if (isDelete) {
+    const headers = {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    };
+    try {
+      if (!changeWorkout(targetWorkoutId)) {
+        response.writeHead(404, headers).end(JSON.stringify({ error: "이미 삭제되었거나 없는 운동 기록입니다." }));
+        return;
+      }
+      response.writeHead(200, headers).end(JSON.stringify({ workoutId: targetWorkoutId, deleted: true }));
+    } catch (error) {
+      console.error("Workout delete API failed:", error);
+      response.writeHead(500, headers).end(JSON.stringify({ error: "운동 기록을 삭제하지 못했습니다." }));
+    }
+    return;
+  }
+
+  if ((request.method === "POST" && url.pathname === "/api/workouts") || isUpdate) {
     const headers = {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
@@ -419,12 +518,18 @@ const httpServer = createServer(async (request, response) => {
 
     // 기존 저장 함수를 재사용
     try {
-      const workoutId = saveWorkout(
-        parsed.data.completedAt,
-        parsed.data.exercises,
-      );
+      let workoutId;
+      if (isUpdate) {
+        if (!changeWorkout(targetWorkoutId, parsed.data)) {
+          response.writeHead(404, headers).end(JSON.stringify({ error: "이미 삭제되었거나 없는 운동 기록입니다. 수정 취소 후 목록을 확인해주세요." }));
+          return;
+        }
+        workoutId = targetWorkoutId;
+      } else {
+        workoutId = saveWorkout(parsed.data.completedAt, parsed.data.exercises);
+      }
 
-      response.writeHead(201, headers).end(
+      response.writeHead(isUpdate ? 200 : 201, headers).end(
         JSON.stringify({ workoutId }),
       );
     } catch (error) {

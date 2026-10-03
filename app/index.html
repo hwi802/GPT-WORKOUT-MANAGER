@@ -9,49 +9,47 @@
 </head>
 <body>
   <main>
-    <header>
+    <header class="page-header">
       <div>
         <p class="brand">FITLOG</p>
-        <h1>나의 운동 기록</h1>
-        <p>지난 운동의 중량과 반복 횟수를 확인하세요.</p>
+        <h1>오늘의 운동 기록</h1>
+        <p class="muted">운동을 선택하고, 수행한 세트를 하나씩 기록하세요.</p>
       </div>
-      <button id="refresh" type="button">새로고침</button>
+      <span class="badge">나만의 운동 노트</span>
     </header>
 
-    <section class="workout">
-  <h2>운동 기록 추가</h2>
+    <form id="workout-form">
+      <fieldset id="form-fields">
+        <legend class="sr-only">운동 기록 입력</legend>
+        <label class="date-label">완료 시각 (한국 시간)
+          <input id="completed-at" type="datetime-local" required>
+        </label>
+        <div class="catalog-toolbar">
+          <p id="catalog-status" class="muted" role="status"></p>
+          <button id="reload-exercises" class="text-button" type="button">종목 목록 새로고침</button>
+        </div>
+        <p id="edit-banner" class="edit-banner" role="status" hidden></p>
+        <div id="exercise-cards"></div>
+        <div class="form-actions">
+          <button id="add-exercise" class="secondary" type="button">+ 다른 운동 추가</button>
+          <div class="record-actions">
+            <button id="cancel-edit" class="secondary" type="button" hidden>수정 취소</button>
+            <button id="save-workout" type="submit">운동 기록 저장</button>
+          </div>
+        </div>
+      </fieldset>
+      <p id="form-status" role="status" aria-live="polite"></p>
+    </form>
 
-  <form id="workout-form">
-    <label>
-      완료 시각 (한국 시간)
-      <input id="completed-at" type="datetime-local" required>
-    </label>
-
-    <label>
-      운동 종목
-      <input
-        id="exercise-name"
-        type="text"
-        placeholder="예: 체스트프레스"
-        maxlength="100"
-        required
-      >
-    </label>
-
-    <p>세트별 중량과 반복 횟수</p>
-    <div id="set-inputs"></div>
-
-    <div class="form-actions">
-      <button id="add-set" type="button">세트 추가</button>
-      <button id="save-workout" type="submit">운동 저장</button>
-    </div>
-
-    <p id="form-status" role="status"></p>
-  </form>
-</section>
-
-    <p id="status" role="status"></p>
-    <section id="workouts" aria-label="최근 운동 기록"></section>
+    <section class="history-section" aria-labelledby="history-title">
+      <div class="section-heading">
+        <h2 id="history-title">최근 운동 기록</h2>
+        <button id="refresh" class="secondary" type="button">기록 새로고침</button>
+      </div>
+      <p id="action-status" role="status" aria-live="polite"></p>
+      <p id="status" role="status"></p>
+      <div id="workouts"></div>
+    </section>
   </main>
 </body>
 </html>
