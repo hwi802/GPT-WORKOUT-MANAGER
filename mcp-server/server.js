@@ -75,6 +75,75 @@ const selectExerciseNames = db.prepare(`
     AND EXISTS (SELECT 1 FROM workout_sets AS s WHERE s.exercise_id = e.id)
 `);
 
+const selectRecentExerciseRows = db.prepare(`
+  WITH recent_sessions AS (
+    SELECT w.id, w.completed_at
+    FROM workouts AS w
+    WHERE EXISTS (
+      SELECT 1
+      FROM exercises AS e
+      JOIN workout_sets AS s ON s.exercise_id = e.id
+      WHERE e.workout_id = w.id
+        AND TRIM(e.name) = ?
+    )
+    ORDER BY julianday(w.completed_at) DESC, w.id DESC
+    LIMIT 7
+  )
+  SELECT
+    rs.id AS workout_id,
+    rs.completed_at AS completed_at,
+    s.weight AS weight,
+    s.reps AS reps
+  FROM recent_sessions AS rs
+  JOIN exercises AS e
+    ON e.workout_id = rs.id AND TRIM(e.name) = ?
+  JOIN workout_sets AS s ON s.exercise_id = e.id
+  ORDER BY
+    julianday(rs.completed_at) DESC,
+    rs.id DESC,
+    e.exercise_order ASC,
+    s.set_number ASC
+`);
+
+const selectRecentBodyPartRows = db.prepare(`
+  WITH recent_sessions AS (
+    SELECT w.id, w.completed_at
+    FROM workouts AS w
+    WHERE EXISTS (
+      SELECT 1
+      FROM exercises AS e
+      JOIN exercise_catalog AS c ON c.name = TRIM(e.name)
+      JOIN workout_sets AS s ON s.exercise_id = e.id
+      WHERE e.workout_id = w.id
+        AND c.body_part = ?
+    )
+    ORDER BY julianday(w.completed_at) DESC, w.id DESC
+    LIMIT 7
+  )
+  SELECT
+    rs.id AS workout_id,
+    rs.completed_at AS completed_at,
+    TRIM(e.name) AS exercise_name,
+    s.weight AS weight,
+    s.reps AS reps
+  FROM recent_sessions AS rs
+  JOIN exercises AS e ON e.workout_id = rs.id
+  JOIN exercise_catalog AS c ON c.name = TRIM(e.name)
+  JOIN workout_sets AS s ON s.exercise_id = e.id
+  WHERE c.body_part = ?
+  ORDER BY
+    julianday(rs.completed_at) DESC,
+    rs.id DESC,
+    e.exercise_order ASC,
+    s.set_number ASC
+`);
+
+const selectBodyPartByName = db.prepare(`
+  SELECT body_part AS bodyPart
+  FROM exercise_catalog
+  WHERE name = ?
+`);
+
 const insertWorkout = db.prepare(`
   INSERT INTO workouts (id, completed_at)
   VALUES (?, ?)
@@ -141,6 +210,65 @@ function getRecentWorkouts(limit) {
   }
 
   return workouts;
+}
+
+function getRecentExerciseSessions(name) {
+  const rows = selectRecentExerciseRows.all(name, name);
+  const sessions = [];
+
+  for (const row of rows) {
+    let session = sessions.at(-1);
+
+    if (!session || session.workoutId !== row.workout_id) {
+      session = {
+        workoutId: row.workout_id,
+        completedAt: row.completed_at,
+        sets: [],
+      };
+      sessions.push(session);
+    }
+
+    session.sets.push({
+      weight: Number(row.weight),
+      reps: Number(row.reps),
+    });
+  }
+
+  return sessions;
+}
+
+function getRecentBodyPartSessions(bodyPart) {
+  const rows = selectRecentBodyPartRows.all(bodyPart, bodyPart);
+  const sessions = [];
+
+  for (const row of rows) {
+    let session = sessions.at(-1);
+
+    if (!session || session.workoutId !== row.workout_id) {
+      session = {
+        workoutId: row.workout_id,
+        completedAt: row.completed_at,
+        exercises: [],
+      };
+      sessions.push(session);
+    }
+
+    let exercise = session.exercises.find(
+      (item) => item.name === row.exercise_name,
+    );
+
+    if (!exercise) {
+      exercise = { name: row.exercise_name, sets: [] };
+      session.exercises.push(exercise);
+    }
+
+    exercise.sets.push({
+      weight: Number(row.weight),
+      reps: Number(row.reps),
+    });
+  }
+
+  return sessions;
 }
 
 function saveWorkout(completedAt, exercises) {
@@ -398,66 +526,104 @@ const httpServer = createServer(async (request, response) => {
   }
 
   if (request.method === "PUT" && url.pathname === "/api/exercise-categories") {
-  const headers = { "content-type": "application/json; charset=utf-8" };
+    const headers = { "content-type": "application/json; charset=utf-8" };
 
-  try {
-    const chunks = [];
-    let size = 0;
+    try {
+      const chunks = [];
+      let size = 0;
 
-    for await (const chunk of request) {
-      size += chunk.length;
-      if (size > 4096) {
-        response.writeHead(413, headers).end(
-          JSON.stringify({ error: "입력 데이터가 너무 큽니다." }),
+      for await (const chunk of request) {
+        size += chunk.length;
+        if (size > 4096) {
+          response.writeHead(413, headers).end(
+            JSON.stringify({ error: "입력 데이터가 너무 큽니다." }),
+          );
+          return;
+        }
+        chunks.push(chunk);
+      }
+
+      let input;
+      try {
+        input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        response.writeHead(400, headers).end(
+          JSON.stringify({ error: "올바른 JSON 형식이 아닙니다." }),
         );
         return;
       }
-      chunks.push(chunk);
+
+      const parsed = z.object({
+        name: z.string().trim().min(1).max(100),
+        bodyPart: bodyPartSchema,
+      }).safeParse(input);
+
+      if (!parsed.success) {
+        response.writeHead(400, headers).end(
+          JSON.stringify({ error: "종목명과 운동 부위를 확인해주세요." }),
+        );
+        return;
+      }
+
+      const { name, bodyPart } = parsed.data;
+      const result = updateCatalogBodyPart.run(bodyPart, name);
+
+      if (result.changes === 0) {
+        response.writeHead(404, headers).end(
+          JSON.stringify({ error: "기록된 종목을 찾지 못했습니다." }),
+        );
+        return;
+      }
+
+      response.writeHead(200, headers).end(JSON.stringify({ name, bodyPart }));
+    } catch (error) {
+      console.error("Exercise category update failed:", error);
+      if (!response.headersSent) {
+        response.writeHead(500, headers).end(
+          JSON.stringify({ error: "운동 부위를 저장하지 못했습니다." }),
+        );
+      }
     }
-
-    let input;
-    try {
-      input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    } catch {
-      response.writeHead(400, headers).end(
-        JSON.stringify({ error: "올바른 JSON 형식이 아닙니다." }),
-      );
-      return;
-    }
-
-    const parsed = z.object({
-      name: z.string().trim().min(1).max(100),
-      bodyPart: bodyPartSchema,
-    }).safeParse(input);
-
-    if (!parsed.success) {
-      response.writeHead(400, headers).end(
-        JSON.stringify({ error: "종목명과 운동 부위를 확인해주세요." }),
-      );
-      return;
-    }
-
-    const { name, bodyPart } = parsed.data;
-    const result = updateCatalogBodyPart.run(bodyPart, name);
-
-    if (result.changes === 0) {
-      response.writeHead(404, headers).end(
-        JSON.stringify({ error: "기록된 종목을 찾지 못했습니다." }),
-      );
-      return;
-    }
-
-    response.writeHead(200, headers).end(JSON.stringify({ name, bodyPart }));
-  } catch (error) {
-    console.error("Exercise category update failed:", error);
-    if (!response.headersSent) {
-      response.writeHead(500, headers).end(
-        JSON.stringify({ error: "운동 부위를 저장하지 못했습니다." }),
-      );
-    }
+    return;
   }
-  return;
-}
+
+  if (request.method === "GET" && url.pathname === "/api/insights") {
+    const name = url.searchParams.get("exercise")?.trim();
+    const headers = {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    };
+
+    if (!name || name.length > 100) {
+      response.writeHead(400, headers).end(
+        JSON.stringify({ error: "조회할 운동 종목을 선택해주세요." }),
+      );
+      return;
+    }
+
+    try {
+      const recentExercise = getRecentExerciseSessions(name);
+      const bodyPart = selectBodyPartByName.get(name)?.bodyPart ?? "미분류";
+      const recentBodyPart = bodyPart === "미분류"
+        ? []
+        : getRecentBodyPartSessions(bodyPart);
+
+      response.writeHead(200, headers).end(
+        JSON.stringify({
+          exerciseName: name,
+          bodyPart,
+          recentExercise,
+          recentBodyPart,
+        }),
+      );
+    } catch (error) {
+      console.error("Exercise insights failed:", error);
+      response.writeHead(500, headers).end(
+        JSON.stringify({ error: "종목 기록을 조회하지 못했습니다." }),
+      );
+    }
+    return;
+  }
 
   if (request.method === "GET" && url.pathname === "/api/workouts") {
     const limit = Number(url.searchParams.get("limit") ?? 10);

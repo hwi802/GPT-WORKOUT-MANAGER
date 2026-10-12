@@ -108,6 +108,77 @@ let exerciseNames = [];
 let exerciseCatalog = new Map();
 const categoryExercise = document.querySelector("#category-exercise");
 const categoryPart = document.querySelector("#category-part");
+const insightExercise = document.querySelector("#insight-exercise");
+const insightStatus = document.querySelector("#insight-status");
+const recentExerciseContainer = document.querySelector("#recent-exercise");
+const recentBodyPartContainer = document.querySelector("#recent-body-part");
+
+async function loadInsights() {
+  const name = insightExercise.value;
+  recentExerciseContainer.replaceChildren();
+  recentBodyPartContainer.replaceChildren();
+
+  if (!name) {
+    insightStatus.textContent = "운동 종목을 선택하세요.";
+    return;
+  }
+
+  insightStatus.textContent = "기록을 불러오는 중입니다.";
+
+  try {
+    const response = await fetch(
+      `/api/insights?exercise=${encodeURIComponent(name)}`,
+      { cache: "no-store" },
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "조회에 실패했습니다.");
+    if (insightExercise.value !== name) return;
+
+    insightStatus.className = "";
+    insightStatus.textContent = `${name} · ${data.bodyPart}`;
+
+    for (const session of data.recentExercise) {
+      const date = new Date(session.completedAt).toLocaleDateString(
+        "ko-KR",
+        { timeZone: "Asia/Seoul" },
+      );
+      const sets = session.sets
+        .map((set) => `${set.weight}kg × ${set.reps}회`)
+        .join(", ");
+      recentExerciseContainer.append(element("p", `${date} · ${sets}`));
+    }
+
+    if (!data.recentExercise.length) {
+      recentExerciseContainer.textContent = "이 종목의 운동 기록이 없습니다.";
+    }
+    for (const session of data.recentBodyPart) {
+  const date = new Date(session.completedAt).toLocaleDateString(
+    "ko-KR",
+    { timeZone: "Asia/Seoul" },
+  );
+  const exercises = session.exercises.map((exercise) => {
+    const sets = exercise.sets
+      .map((set) => `${set.weight}kg × ${set.reps}회`)
+      .join(", ");
+    return `${exercise.name}: ${sets}`;
+  });
+
+  recentBodyPartContainer.append(
+    element("p", `${date} · ${exercises.join(" / ")}`),
+  );
+}
+
+if (!data.recentBodyPart.length) {
+  recentBodyPartContainer.textContent = "같은 부위의 운동 기록이 없습니다.";
+}
+  } catch (error) {
+    console.error(error);
+    insightStatus.className = "error";
+    insightStatus.textContent = error.message;
+  }
+}
+
+insightExercise.addEventListener("change", loadInsights);
 
 function showSelectedBodyPart() {
   categoryPart.value =
@@ -323,6 +394,23 @@ categoryExercise.value = exerciseNames.includes(previousSelection)
   ? previousSelection
   : "";
 showSelectedBodyPart();
+const previousInsightSelection = insightExercise.value;
+insightExercise.replaceChildren();
+
+const insightPlaceholder = element("option", "종목을 선택하세요");
+insightPlaceholder.value = "";
+insightExercise.append(insightPlaceholder);
+
+for (const name of exerciseNames) {
+  const option = element("option", name);
+  option.value = name;
+  insightExercise.append(option);
+}
+
+insightExercise.value = exerciseNames.includes(previousInsightSelection)
+  ? previousInsightSelection
+  : "";
+
     cards.querySelectorAll(".exercise-history").forEach(populateHistory);
     catalogStatus.textContent = exerciseNames.length
       ? `수행한 운동 ${exerciseNames.length}종목 · 목록을 스크롤해서 선택하세요.`
