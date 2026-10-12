@@ -105,3 +105,11 @@ th { color: #64748b; background: #f8fafc; }
 #suggestion-result {
   white-space: pre-wrap;
 }
+
+.weekly-advice {
+  margin-top: 24px;
+}
+
+#weekly-result {
+  white-space: pre-wrap;
+}

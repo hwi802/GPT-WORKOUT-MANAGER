@@ -99,14 +99,22 @@
       <div id="progress-chart" class="progress-chart"></div>
     </section>
 
-    <section class="suggestion-section" aria-labelledby="suggestion-title">
-      <h2 id="suggestion-title">오늘 운동 제안</h2>
-      <p>저장된 기록을 바탕으로 오늘의 종목과 세트를 제안받습니다.</p>
-      <label for="ai-token">AI 기능 접근 토큰</label>
-      <input id="ai-token" type="password" autocomplete="off">
-      <button id="suggest-workout" type="button">오늘 운동 제안받기</button>
-      <p id="suggestion-status" role="status"></p>
-      <div id="suggestion-result"></div>
+    <h2 id="suggestion-title">AI 운동 도우미</h2>
+    <h3>오늘 운동 제안</h3>
+    <p>저장된 기록을 바탕으로 오늘의 종목과 세트를 제안받습니다.</p>
+    <label for="ai-token">AI 기능 접근 토큰</label>
+    <input id="ai-token" type="password" autocomplete="off">
+    <button id="suggest-workout" type="button">오늘 운동 제안받기</button>
+    <p id="suggestion-status" role="status"></p>
+    <div id="suggestion-result"></div>
+    <div class="weekly-advice">
+      <h3>현재 운동 수준 및 조언</h3>
+      <p>최근 7일 동안 저장된 운동 기록을 분석합니다.</p>
+      <button id="weekly-advice" type="button">최근 7일 분석받기</button>
+      <p id="weekly-status" role="status"></p>
+      <div id="weekly-result"></div>
+    </div>
+
     </section>
 
   </main>

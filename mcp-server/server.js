@@ -51,6 +51,30 @@ const selectRecentWorkoutRows = db.prepare(`
     s.set_number ASC
 `);
 
+const selectLastSevenDaysWorkoutRows = db.prepare(`
+  SELECT
+    w.id AS workout_id,
+    w.completed_at AS completed_at,
+    e.id AS exercise_id,
+    e.name AS exercise_name,
+    e.exercise_order AS exercise_order,
+    s.id AS set_id,
+    s.set_number AS set_number,
+    s.weight AS weight,
+    s.reps AS reps
+  FROM workouts AS w
+  LEFT JOIN exercises AS e ON e.workout_id = w.id
+  LEFT JOIN workout_sets AS s ON s.exercise_id = e.id
+  WHERE julianday(w.completed_at) >= julianday(?)
+    AND julianday(w.completed_at) <= julianday(?)
+  ORDER BY
+    julianday(w.completed_at) DESC,
+    w.id DESC,
+    e.exercise_order ASC,
+    s.set_number ASC
+`);
+
+
 const selectCatalogRows = db.prepare(`
   SELECT name, body_part AS bodyPart
   FROM exercise_catalog
@@ -178,8 +202,7 @@ const insertSet = db.prepare(`
   VALUES (?, ?, ?, ?)
 `);
 
-function getRecentWorkouts(limit) {
-  const rows = selectRecentWorkoutRows.all(limit);
+function rowsToWorkouts(rows) {
 
   const workouts = [];
   const workoutsById = new Map();
@@ -224,6 +247,22 @@ function getRecentWorkouts(limit) {
   }
 
   return workouts;
+}
+
+function getRecentWorkouts(limit) {
+  return rowsToWorkouts(selectRecentWorkoutRows.all(limit));
+}
+
+function getLastSevenDaysWorkouts() {
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  return rowsToWorkouts(
+    selectLastSevenDaysWorkoutRows.all(
+      sevenDaysAgo.toISOString(),
+      now.toISOString(),
+    ),
+  );
 }
 
 function getRecentExerciseSessions(name) {
@@ -300,9 +339,12 @@ function getSuggestionCandidates() {
   }));
 }
 
-async function generateWorkoutSuggestion() {
-  const candidates = getSuggestionCandidates();
-  if (!candidates.length) {
+async function generateWorkoutSuggestion(weeklyWorkouts = null) {
+  const isWeekly = weeklyWorkouts !== null;
+  if (isWeekly && weeklyWorkouts.length === 0) return null;
+
+  const candidates = isWeekly ? [] : getSuggestionCandidates();
+  if (!isWeekly && !candidates.length) {
     throw new Error("부위가 설정된 운동 종목이 없습니다.");
   }
 
@@ -321,12 +363,27 @@ async function generateWorkoutSuggestion() {
       model: "gpt-5.4-mini",
       instructions: [
         "당신은 한국어로 답하는 운동 기록 분석 도우미입니다.",
-        "제공된 후보 중 오늘 수행할 종목을 선택하세요.",
-        "선택한 종목과 같은 부위의 최근 기록을 근거로 세트별 중량과 횟수를 제안하세요.",
-        "기록이 적거나 오래됐다면 보수적으로 제안하고, 존재하지 않는 기록을 만들지 마세요.",
-        "종목명, 세트 구성, 간단한 이유를 읽기 쉽게 작성하세요.",
+        ...(isWeekly
+          ? [
+            "입력에는 최근 7일에 저장된 운동 기록만 있습니다.",
+            "운동 빈도와 종목별 세트, 중량, 반복 횟수를 근거로 현재 수행 수준을 설명하세요.",
+            "개선할 점과 다음 운동에 적용할 구체적인 조언 2~3개를 제시하세요.",
+            "기록이 없는 날을 휴식한 날로 단정하지 마세요.",
+            "이 데이터만으로 장기적인 성장이나 건강 상태를 단정하지 마세요.",
+          ]
+          : [
+            "제공된 후보 중 오늘 수행할 종목을 선택하세요.",
+            "선택한 종목과 같은 부위의 최근 기록을 근거로 세트별 중량과 횟수를 제안하세요.",
+            "기록이 적거나 오래됐다면 보수적으로 제안하세요.",
+            "종목명, 세트 구성, 간단한 이유를 읽기 쉽게 작성하세요.",
+          ]),
+        "존재하지 않는 기록을 만들지 마세요.",
+        "마크다운 기호 없이 일반 텍스트로 작성하세요.",
       ].join(" "),
-      input: JSON.stringify({ today: new Date().toISOString(), candidates }),
+      input: JSON.stringify({
+        today: new Date().toISOString(),
+        ...(isWeekly ? { workouts: weeklyWorkouts } : { candidates }),
+      }),
       max_output_tokens: 800,
       store: false,
     }),
@@ -334,12 +391,12 @@ async function generateWorkoutSuggestion() {
   });
 
   const result = await apiResponse.json();
+
   if (!apiResponse.ok) {
-    const errorBody = await apiResponse.json().catch(() => ({}));
     console.error("OpenAI 오류 상세:", {
       status: apiResponse.status,
-      code: errorBody.error?.code,
-      type: errorBody.error?.type,
+      code: result.error?.code,
+      type: result.error?.type,
     });
     throw new Error(`OpenAI API 오류: HTTP ${apiResponse.status}`);
   }
@@ -352,7 +409,7 @@ async function generateWorkoutSuggestion() {
     .trim();
 
   if (!suggestion) throw new Error("AI가 제안 내용을 반환하지 않았습니다.");
-  return suggestion;
+  return suggestion.replaceAll("**", "");
 }
 
 function saveWorkout(completedAt, exercises) {
@@ -671,7 +728,10 @@ const httpServer = createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/api/suggestions") {
+  if (
+    request.method === "POST" &&
+    (url.pathname === "/api/suggestions" || url.pathname === "/api/weekly-advice")
+  ) {
     const headers = {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
@@ -695,12 +755,36 @@ const httpServer = createServer(async (request, response) => {
     }
 
     try {
-      const suggestion = await generateWorkoutSuggestion();
-      response.writeHead(200, headers).end(JSON.stringify({ suggestion }));
+      const isWeekly = url.pathname === "/api/weekly-advice";
+      const workouts = isWeekly ? getLastSevenDaysWorkouts() : null;
+      const suggestion = await generateWorkoutSuggestion(workouts);
+      const payload = isWeekly
+        ? { workouts, advice: suggestion }
+        : { suggestion };
+
+      response.writeHead(200, headers).end(JSON.stringify(payload));
     } catch (error) {
       console.error("Workout suggestion failed:", error);
       response.writeHead(502, headers).end(
         JSON.stringify({ error: "AI 운동 제안을 생성하지 못했습니다." }),
+      );
+    }
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/weekly-records") {
+    const headers = {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    };
+
+    try {
+      const workouts = getLastSevenDaysWorkouts();
+      response.writeHead(200, headers).end(JSON.stringify({ workouts }));
+    } catch (error) {
+      console.error("Weekly workout lookup failed:", error);
+      response.writeHead(500, headers).end(
+        JSON.stringify({ error: "최근 7일 운동 기록을 조회하지 못했습니다." }),
       );
     }
     return;

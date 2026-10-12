@@ -680,6 +680,48 @@ suggestionButton.addEventListener("click", async () => {
   }
 });
 
+const weeklyAdviceButton = document.querySelector("#weekly-advice");
+const weeklyStatus = document.querySelector("#weekly-status");
+const weeklyResult = document.querySelector("#weekly-result");
+
+weeklyAdviceButton.addEventListener("click", async () => {
+  const token = aiTokenInput.value.trim();
+  if (!token) {
+    weeklyStatus.textContent = "AI 기능 접근 토큰을 입력해주세요.";
+    aiTokenInput.focus();
+    return;
+  }
+
+  weeklyAdviceButton.disabled = true;
+  weeklyStatus.textContent = "최근 7일 기록을 확인하고 있습니다.";
+  weeklyResult.textContent = "";
+
+  try {
+    const response = await fetch("/api/weekly-advice", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error ?? "주간 분석 요청에 실패했습니다.");
+    }
+
+    if (!data.workouts?.length) {
+      weeklyStatus.textContent = "최근 7일간 저장된 운동 기록이 없습니다.";
+      weeklyResult.textContent = "운동을 기록한 뒤 다시 분석받아 주세요.";
+      return;
+    }
+
+    weeklyStatus.textContent =
+      `최근 7일 운동 기록 ${data.workouts.length}건을 분석했습니다.`;
+    weeklyResult.textContent = data.advice ?? "분석 결과가 없습니다.";
+  } catch (error) {
+    weeklyStatus.textContent = error.message;
+  } finally {
+    weeklyAdviceButton.disabled = false;
+  }
+});
+
 setCurrentKoreanTime();
 addExerciseCard();
 loadWorkouts();
