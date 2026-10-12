@@ -37,6 +37,16 @@ db.exec(`
       REFERENCES exercises(id)
       ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS exercise_catalog (
+    name TEXT PRIMARY KEY,
+    body_part TEXT NOT NULL DEFAULT '미분류'
+  );
+
+  INSERT OR IGNORE INTO exercise_catalog (name, body_part)
+  SELECT DISTINCT TRIM(name), '미분류'
+  FROM exercises
+  WHERE TRIM(name) <> '';
+
 `);
 
 db.close();

@@ -51,6 +51,22 @@ const selectRecentWorkoutRows = db.prepare(`
     s.set_number ASC
 `);
 
+const selectCatalogRows = db.prepare(`
+  SELECT name, body_part AS bodyPart
+  FROM exercise_catalog
+  ORDER BY name
+`);
+
+const updateCatalogBodyPart = db.prepare(`
+  UPDATE exercise_catalog
+  SET body_part = ?
+  WHERE name = ?
+`);
+
+const bodyPartSchema = z.enum([
+  "가슴", "등", "하체", "어깨", "팔", "코어", "유산소", "전신", "미분류",
+]);
+
 // 실제 세트 기록이 있는 종목만 중복 없이 가져옵니다.
 const selectExerciseNames = db.prepare(`
   SELECT DISTINCT TRIM(e.name) AS name
@@ -67,6 +83,11 @@ const insertWorkout = db.prepare(`
 const insertExercise = db.prepare(`
   INSERT INTO exercises (workout_id, name, exercise_order)
   VALUES (?, ?, ?)
+`);
+
+const insertCatalogName = db.prepare(`
+  INSERT OR IGNORE INTO exercise_catalog (name, body_part)
+  VALUES (?, '미분류')
 `);
 
 const insertSet = db.prepare(`
@@ -142,24 +163,25 @@ function saveWorkout(completedAt, exercises) {
 
 // 종목과 세트 쓰기를 새 기록 저장과 기존 기록 수정에서 공유합니다.
 function insertWorkoutExercises(workoutId, exercises) {
-    for (const [exerciseIndex, exercise] of exercises.entries()) {
-      const exerciseResult = insertExercise.run(
-        workoutId,
-        exercise.name,
-        exerciseIndex + 1,
+  for (const [exerciseIndex, exercise] of exercises.entries()) {
+    const exerciseResult = insertExercise.run(
+      workoutId,
+      exercise.name,
+      exerciseIndex + 1,
+    );
+
+    const exerciseId = exerciseResult.lastInsertRowid;
+
+    for (const [setIndex, set] of exercise.sets.entries()) {
+      insertSet.run(
+        exerciseId,
+        setIndex + 1,
+        set.weight,
+        set.reps,
       );
-
-      const exerciseId = exerciseResult.lastInsertRowid;
-
-      for (const [setIndex, set] of exercise.sets.entries()) {
-        insertSet.run(
-          exerciseId,
-          setIndex + 1,
-          set.weight,
-          set.reps,
-        );
-      }
     }
+    insertCatalogName.run(exercise.name.trim());
+  }
 
 }
 
@@ -362,7 +384,10 @@ const httpServer = createServer(async (request, response) => {
       const exercises = selectExerciseNames.all()
         .map((row) => row.name)
         .sort((a, b) => a.localeCompare(b, "ko"));
-      response.writeHead(200, headers).end(JSON.stringify({ exercises }));
+      const catalog = selectCatalogRows.all();
+      response.writeHead(200, headers).end(
+        JSON.stringify({ exercises, catalog }),
+      );
     } catch (error) {
       console.error("Exercise API failed:", error);
       response.writeHead(500, headers).end(
@@ -371,6 +396,68 @@ const httpServer = createServer(async (request, response) => {
     }
     return;
   }
+
+  if (request.method === "PUT" && url.pathname === "/api/exercise-categories") {
+  const headers = { "content-type": "application/json; charset=utf-8" };
+
+  try {
+    const chunks = [];
+    let size = 0;
+
+    for await (const chunk of request) {
+      size += chunk.length;
+      if (size > 4096) {
+        response.writeHead(413, headers).end(
+          JSON.stringify({ error: "입력 데이터가 너무 큽니다." }),
+        );
+        return;
+      }
+      chunks.push(chunk);
+    }
+
+    let input;
+    try {
+      input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      response.writeHead(400, headers).end(
+        JSON.stringify({ error: "올바른 JSON 형식이 아닙니다." }),
+      );
+      return;
+    }
+
+    const parsed = z.object({
+      name: z.string().trim().min(1).max(100),
+      bodyPart: bodyPartSchema,
+    }).safeParse(input);
+
+    if (!parsed.success) {
+      response.writeHead(400, headers).end(
+        JSON.stringify({ error: "종목명과 운동 부위를 확인해주세요." }),
+      );
+      return;
+    }
+
+    const { name, bodyPart } = parsed.data;
+    const result = updateCatalogBodyPart.run(bodyPart, name);
+
+    if (result.changes === 0) {
+      response.writeHead(404, headers).end(
+        JSON.stringify({ error: "기록된 종목을 찾지 못했습니다." }),
+      );
+      return;
+    }
+
+    response.writeHead(200, headers).end(JSON.stringify({ name, bodyPart }));
+  } catch (error) {
+    console.error("Exercise category update failed:", error);
+    if (!response.headersSent) {
+      response.writeHead(500, headers).end(
+        JSON.stringify({ error: "운동 부위를 저장하지 못했습니다." }),
+      );
+    }
+  }
+  return;
+}
 
   if (request.method === "GET" && url.pathname === "/api/workouts") {
     const limit = Number(url.searchParams.get("limit") ?? 10);

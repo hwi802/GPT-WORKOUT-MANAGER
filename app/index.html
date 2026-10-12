@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,6 +8,7 @@
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
+
 <body>
   <main>
     <header class="page-header">
@@ -41,6 +43,32 @@
       <p id="form-status" role="status" aria-live="polite"></p>
     </form>
 
+    <section class="category-section" aria-labelledby="category-title">
+      <h2 id="category-title">운동 부위 설정</h2>
+      <p class="muted">기존 종목의 부위를 지정하면 같은 부위 운동 기록을 묶어 볼 수 있습니다.</p>
+
+      <label for="category-exercise">운동 종목</label>
+      <select id="category-exercise">
+        <option value="">종목을 선택하세요</option>
+      </select>
+
+      <label for="category-part">운동 부위</label>
+      <select id="category-part">
+        <option value="가슴">가슴</option>
+        <option value="등">등</option>
+        <option value="하체">하체</option>
+        <option value="어깨">어깨</option>
+        <option value="팔">팔</option>
+        <option value="코어">코어</option>
+        <option value="유산소">유산소</option>
+        <option value="전신">전신</option>
+        <option value="미분류">미분류</option>
+      </select>
+
+      <button id="save-category" type="button">부위 저장</button>
+      <p id="category-status" role="status" aria-live="polite"></p>
+    </section>
+
     <section class="history-section" aria-labelledby="history-title">
       <div class="section-heading">
         <h2 id="history-title">최근 운동 기록</h2>
@@ -52,4 +80,5 @@
     </section>
   </main>
 </body>
+
 </html>

@@ -105,6 +105,55 @@ const formStatus = document.querySelector("#form-status");
 const catalogStatus = document.querySelector("#catalog-status");
 const reloadExercises = document.querySelector("#reload-exercises");
 let exerciseNames = [];
+let exerciseCatalog = new Map();
+const categoryExercise = document.querySelector("#category-exercise");
+const categoryPart = document.querySelector("#category-part");
+
+function showSelectedBodyPart() {
+  categoryPart.value =
+    exerciseCatalog.get(categoryExercise.value) ?? "미분류";
+}
+
+categoryExercise.addEventListener("change", showSelectedBodyPart);
+const saveCategory = document.querySelector("#save-category");
+const categoryStatus = document.querySelector("#category-status");
+
+saveCategory.addEventListener("click", async () => {
+  const name = categoryExercise.value;
+
+  if (!name) {
+    categoryStatus.textContent = "먼저 운동 종목을 선택하세요.";
+    return;
+  }
+
+  saveCategory.disabled = true;
+  categoryStatus.className = "";
+  categoryStatus.textContent = "저장 중입니다.";
+
+  try {
+    const response = await fetch("/api/exercise-categories", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name,
+        bodyPart: categoryPart.value,
+      }),
+    });
+
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error ?? "부위를 저장하지 못했습니다.");
+    }
+
+    exerciseCatalog.set(name, result.bodyPart);
+    categoryStatus.textContent = `${name}: ${result.bodyPart}(으)로 저장했습니다.`;
+  } catch (error) {
+    categoryStatus.className = "error";
+    categoryStatus.textContent = error.message;
+  } finally {
+    saveCategory.disabled = false;
+  }
+});
 let saving = false;
 let draftChanged = false;
 let editingId = null;
@@ -253,6 +302,27 @@ async function loadExerciseNames() {
       throw new Error("올바르지 않은 운동 종목 응답입니다.");
     }
     exerciseNames = data.exercises;
+    exerciseCatalog = new Map(
+  (data.catalog ?? []).map(({ name, bodyPart }) => [name, bodyPart]),
+);
+
+const previousSelection = categoryExercise.value;
+categoryExercise.replaceChildren();
+
+const placeholder = element("option", "종목을 선택하세요");
+placeholder.value = "";
+categoryExercise.append(placeholder);
+
+for (const name of exerciseNames) {
+  const option = element("option", name);
+  option.value = name;
+  categoryExercise.append(option);
+}
+
+categoryExercise.value = exerciseNames.includes(previousSelection)
+  ? previousSelection
+  : "";
+showSelectedBodyPart();
     cards.querySelectorAll(".exercise-history").forEach(populateHistory);
     catalogStatus.textContent = exerciseNames.length
       ? `수행한 운동 ${exerciseNames.length}종목 · 목록을 스크롤해서 선택하세요.`
