@@ -694,7 +694,7 @@ function createFitLogServer() {
     { name: "fitlog", version: "0.1.0" },
     {
       instructions:
-        "Use FitLog tools whenever an answer depends on the user's workout history. Read-only tools never modify workout data.",
+        "Use Hwi's FitLog tools whenever an answer depends on the user's workout history. Read-only tools never modify workout data.",
     },
   );
 
@@ -753,7 +753,7 @@ function createFitLogServer() {
     {
       title: "운동 기록 저장",
       description:
-        "사용자가 완료한 운동의 종목, 중량, 반복 횟수를 FitLog에 저장합니다.",
+        "사용자가 완료한 운동의 종목, 중량, 반복 횟수를 Hwi's FitLog에 저장합니다.",
       inputSchema: {
         completedAt: z.string(),
         exercises: z.array(
@@ -1343,5 +1343,5 @@ const httpServer = createServer(async (request, response) => {
 });
 
 httpServer.listen(PORT, () => {
-  console.log(`FitLog MCP server listening on http://localhost:${PORT}${MCP_PATH}`);
+  console.log(`Hwi's FitLog MCP server listening on http://localhost:${PORT}${MCP_PATH}`);
 });

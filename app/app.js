@@ -25,7 +25,7 @@ function showView() {
       link.removeAttribute("aria-current");
     }
   }
-  document.title = `FitLog | ${{
+  document.title = `Hwi's FitLog | ${{
     workout: "운동하기",
     records: "기록·성장",
     coach: "AI 코치",
