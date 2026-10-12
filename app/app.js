@@ -2,6 +2,48 @@ const container = document.querySelector("#workouts");
 const status = document.querySelector("#status");
 const refresh = document.querySelector("#refresh");
 
+const viewPanels = {
+  workout: document.querySelector("#view-workout"),
+  records: document.querySelector("#view-records"),
+  coach: document.querySelector("#view-coach"),
+};
+const viewLinks = document.querySelectorAll("[data-view-link]");
+
+function showView() {
+  const requested = window.location.hash.slice(1);
+  const active = Object.hasOwn(viewPanels, requested) ? requested : "workout";
+
+  for (const [name, panel] of Object.entries(viewPanels)) {
+    panel.hidden = name !== active;
+  }
+  for (const link of viewLinks) {
+    if (link.dataset.viewLink === active) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  }
+  document.title = `FitLog | ${{
+    workout: "운동하기",
+    records: "기록·성장",
+    coach: "AI 코치",
+  }[active]}`;
+}
+
+function navigateToView(name) {
+  if (window.location.hash !== `#${name}`) {
+    window.location.hash = name;
+  }
+  showView();
+}
+
+window.addEventListener("hashchange", showView);
+for (const link of viewLinks) {
+  link.addEventListener("click", () => {
+    window.scrollTo(0, 0);
+  });
+}
+
 function element(tag, text) {
   const node = document.createElement(tag);
   node.textContent = text;
@@ -311,6 +353,7 @@ function startEditing(workout) {
   formStatus.className = "";
   formStatus.textContent = "종목, 세트, 완료 시각을 수정한 뒤 저장하세요.";
   actionStatus.textContent = "";
+  navigateToView("workout");
   form.scrollIntoView({ behavior: "smooth", block: "start" });
   completedAtInput.focus({ preventScroll: true });
 }
@@ -722,6 +765,7 @@ weeklyAdviceButton.addEventListener("click", async () => {
   }
 });
 
+showView();
 setCurrentKoreanTime();
 addExerciseCard();
 loadWorkouts();

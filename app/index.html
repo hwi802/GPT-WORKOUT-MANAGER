@@ -14,109 +14,122 @@
     <header class="page-header">
       <div>
         <p class="brand">FITLOG</p>
-        <h1>오늘의 운동 기록</h1>
-        <p class="muted">운동을 선택하고, 수행한 세트를 하나씩 기록하세요.</p>
+        <h1>나의 운동 기록</h1>
+        <p class="muted">운동을 기록하고, 변화와 다음 운동을 확인하세요.</p>
       </div>
       <span class="badge">나만의 운동 노트</span>
     </header>
 
-    <form id="workout-form">
-      <fieldset id="form-fields">
-        <legend class="sr-only">운동 기록 입력</legend>
-        <label class="date-label">완료 시각 (한국 시간)
-          <input id="completed-at" type="datetime-local" required>
-        </label>
-        <div class="catalog-toolbar">
-          <p id="catalog-status" class="muted" role="status"></p>
-          <button id="reload-exercises" class="text-button" type="button">종목 목록 새로고침</button>
-        </div>
-        <p id="edit-banner" class="edit-banner" role="status" hidden></p>
-        <div id="exercise-cards"></div>
-        <div class="form-actions">
-          <button id="add-exercise" class="secondary" type="button">+ 다른 운동 추가</button>
-          <div class="record-actions">
-            <button id="cancel-edit" class="secondary" type="button" hidden>수정 취소</button>
-            <button id="save-workout" type="submit">운동 기록 저장</button>
+    <nav class="view-nav" aria-label="주요 메뉴">
+      <a href="#workout" data-view-link="workout">운동하기</a>
+      <a href="#records" data-view-link="records">기록·성장</a>
+      <a href="#coach" data-view-link="coach">AI 코치</a>
+    </nav>
+
+    <section id="view-workout" class="app-view" aria-labelledby="workout-view-title">
+      <h2 id="workout-view-title" class="view-title">운동하기</h2>
+      <p class="muted view-description">수행한 운동과 세트를 하나씩 추가해 기록하세요.</p>
+      <form id="workout-form">
+        <fieldset id="form-fields">
+          <legend class="sr-only">운동 기록 입력</legend>
+          <label class="date-label">완료 시각 (한국 시간)
+            <input id="completed-at" type="datetime-local" required>
+          </label>
+          <div class="catalog-toolbar">
+            <p id="catalog-status" class="muted" role="status"></p>
+            <button id="reload-exercises" class="text-button" type="button">종목 목록 새로고침</button>
           </div>
+          <p id="edit-banner" class="edit-banner" role="status" hidden></p>
+          <div id="exercise-cards"></div>
+          <div class="form-actions">
+            <button id="add-exercise" class="secondary" type="button">+ 다른 운동 추가</button>
+            <div class="record-actions">
+              <button id="cancel-edit" class="secondary" type="button" hidden>수정 취소</button>
+              <button id="save-workout" type="submit">운동 기록 저장</button>
+            </div>
+          </div>
+        </fieldset>
+        <p id="form-status" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="view-records" class="app-view" aria-labelledby="records-view-title" hidden>
+      <h2 id="records-view-title" class="view-title">기록·성장</h2>
+      <p class="muted view-description">지난 운동을 살펴보고 종목별 변화를 확인하세요.</p>
+      <section class="history-section" aria-labelledby="history-title">
+        <div class="section-heading">
+          <h2 id="history-title">최근 운동 기록</h2>
+          <button id="refresh" class="secondary" type="button">기록 새로고침</button>
         </div>
-      </fieldset>
-      <p id="form-status" role="status" aria-live="polite"></p>
-    </form>
+        <p id="action-status" role="status" aria-live="polite"></p>
+        <p id="status" role="status"></p>
+        <div id="workouts"></div>
+      </section>
 
-    <section class="category-section" aria-labelledby="category-title">
-      <h2 id="category-title">운동 부위 설정</h2>
-      <p class="muted">기존 종목의 부위를 지정하면 같은 부위 운동 기록을 묶어 볼 수 있습니다.</p>
+      <section class="insights-section" aria-labelledby="insights-title">
+        <h2 id="insights-title">종목별 운동 기록</h2>
+        <p class="muted">선택한 종목과 같은 부위의 최근 7회 운동을 확인하세요.</p>
 
-      <label for="category-exercise">운동 종목</label>
-      <select id="category-exercise">
-        <option value="">종목을 선택하세요</option>
-      </select>
+        <label for="insight-exercise">조회할 운동 종목</label>
+        <select id="insight-exercise">
+          <option value="">종목을 선택하세요</option>
+        </select>
 
-      <label for="category-part">운동 부위</label>
-      <select id="category-part">
-        <option value="가슴">가슴</option>
-        <option value="등">등</option>
-        <option value="하체">하체</option>
-        <option value="어깨">어깨</option>
-        <option value="팔">팔</option>
-        <option value="코어">코어</option>
-        <option value="유산소">유산소</option>
-        <option value="전신">전신</option>
-        <option value="미분류">미분류</option>
-      </select>
+        <p id="insight-status" role="status" aria-live="polite"></p>
 
-      <button id="save-category" type="button">부위 저장</button>
-      <p id="category-status" role="status" aria-live="polite"></p>
+        <h3>선택 종목의 최근 7회</h3>
+        <div id="recent-exercise"></div>
+
+        <h3>같은 부위의 최근 7회</h3>
+        <div id="recent-body-part"></div>
+        <h3>종목별 최고 중량 변화</h3>
+        <div id="progress-chart" class="progress-chart"></div>
+        <p class="muted">보조 운동의 kg은 보조 중량입니다. 기구마다 중량 기준이 다를 수 있습니다.</p>
+      </section>
+      <section class="category-section" aria-labelledby="category-title">
+        <h2 id="category-title">운동 부위 설정</h2>
+        <p class="muted">기존 종목의 부위를 지정하면 같은 부위 운동 기록을 묶어 볼 수 있습니다.</p>
+
+        <label for="category-exercise">운동 종목</label>
+        <select id="category-exercise">
+          <option value="">종목을 선택하세요</option>
+        </select>
+
+        <label for="category-part">운동 부위</label>
+        <select id="category-part">
+          <option value="가슴">가슴</option>
+          <option value="등">등</option>
+          <option value="하체">하체</option>
+          <option value="어깨">어깨</option>
+          <option value="팔">팔</option>
+          <option value="코어">코어</option>
+          <option value="유산소">유산소</option>
+          <option value="전신">전신</option>
+          <option value="미분류">미분류</option>
+        </select>
+
+        <button id="save-category" type="button">부위 저장</button>
+        <p id="category-status" role="status" aria-live="polite"></p>
+      </section>
     </section>
 
-    <section class="history-section" aria-labelledby="history-title">
-      <div class="section-heading">
-        <h2 id="history-title">최근 운동 기록</h2>
-        <button id="refresh" class="secondary" type="button">기록 새로고침</button>
+    <section id="view-coach" class="app-view coach-section" aria-labelledby="suggestion-title" hidden>
+      <h2 id="suggestion-title">AI 운동 도우미</h2>
+      <h3>오늘 운동 제안</h3>
+      <p>저장된 기록을 바탕으로 오늘의 종목과 세트를 제안받습니다.</p>
+      <label for="ai-token">AI 기능 접근 토큰</label>
+      <input id="ai-token" type="password" autocomplete="off">
+      <button id="suggest-workout" type="button">오늘 운동 제안받기</button>
+      <p id="suggestion-status" role="status"></p>
+      <div id="suggestion-result"></div>
+      <div class="weekly-advice">
+        <h3>현재 운동 수준 및 조언</h3>
+        <p>최근 7일 동안 저장된 운동 기록을 분석합니다.</p>
+        <button id="weekly-advice" type="button">최근 7일 분석받기</button>
+        <p id="weekly-status" role="status"></p>
+        <div id="weekly-result"></div>
       </div>
-      <p id="action-status" role="status" aria-live="polite"></p>
-      <p id="status" role="status"></p>
-      <div id="workouts"></div>
     </section>
-
-    <section class="insights-section" aria-labelledby="insights-title">
-      <h2 id="insights-title">종목별 운동 기록</h2>
-      <p class="muted">선택한 종목과 같은 부위의 최근 7회 운동을 확인하세요.</p>
-
-      <label for="insight-exercise">조회할 운동 종목</label>
-      <select id="insight-exercise">
-        <option value="">종목을 선택하세요</option>
-      </select>
-
-      <p id="insight-status" role="status" aria-live="polite"></p>
-
-      <h3>선택 종목의 최근 7회</h3>
-      <div id="recent-exercise"></div>
-
-      <h3>같은 부위의 최근 7회</h3>
-      <div id="recent-body-part"></div>
-      <h3>종목별 최고 중량 변화</h3>
-      <div id="progress-chart" class="progress-chart"></div>
-    </section>
-
-    <h2 id="suggestion-title">AI 운동 도우미</h2>
-    <h3>오늘 운동 제안</h3>
-    <p>저장된 기록을 바탕으로 오늘의 종목과 세트를 제안받습니다.</p>
-    <label for="ai-token">AI 기능 접근 토큰</label>
-    <input id="ai-token" type="password" autocomplete="off">
-    <button id="suggest-workout" type="button">오늘 운동 제안받기</button>
-    <p id="suggestion-status" role="status"></p>
-    <div id="suggestion-result"></div>
-    <div class="weekly-advice">
-      <h3>현재 운동 수준 및 조언</h3>
-      <p>최근 7일 동안 저장된 운동 기록을 분석합니다.</p>
-      <button id="weekly-advice" type="button">최근 7일 분석받기</button>
-      <p id="weekly-status" role="status"></p>
-      <div id="weekly-result"></div>
-    </div>
-
-    </section>
-
   </main>
 </body>
 
