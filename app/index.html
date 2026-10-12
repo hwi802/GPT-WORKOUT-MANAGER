@@ -95,6 +95,18 @@
 
       <h3>같은 부위의 최근 7회</h3>
       <div id="recent-body-part"></div>
+      <h3>종목별 최고 중량 변화</h3>
+      <div id="progress-chart" class="progress-chart"></div>
+    </section>
+
+    <section class="suggestion-section" aria-labelledby="suggestion-title">
+      <h2 id="suggestion-title">오늘 운동 제안</h2>
+      <p>저장된 기록을 바탕으로 오늘의 종목과 세트를 제안받습니다.</p>
+      <label for="ai-token">AI 기능 접근 토큰</label>
+      <input id="ai-token" type="password" autocomplete="off">
+      <button id="suggest-workout" type="button">오늘 운동 제안받기</button>
+      <p id="suggestion-status" role="status"></p>
+      <div id="suggestion-result"></div>
     </section>
 
   </main>

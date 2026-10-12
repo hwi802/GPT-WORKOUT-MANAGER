@@ -105,6 +105,20 @@ const selectRecentExerciseRows = db.prepare(`
     s.set_number ASC
 `);
 
+const selectExerciseProgress = db.prepare(`
+  SELECT
+    w.id AS workoutId,
+    w.completed_at AS completedAt,
+    MAX(ws.weight) AS maxWeight,
+    SUM(ws.weight * ws.reps) AS totalVolume
+  FROM workouts AS w
+  JOIN exercises AS e ON e.workout_id = w.id
+  JOIN workout_sets AS ws ON ws.exercise_id = e.id
+  WHERE e.name = ?
+  GROUP BY w.id, w.completed_at
+  ORDER BY julianday(w.completed_at) ASC, w.id ASC
+`);
+
 const selectRecentBodyPartRows = db.prepare(`
   WITH recent_sessions AS (
     SELECT w.id, w.completed_at
@@ -269,6 +283,76 @@ function getRecentBodyPartSessions(bodyPart) {
   }
 
   return sessions;
+}
+const selectSuggestionExercises = db.prepare(`
+  SELECT name, body_part AS bodyPart
+  FROM exercise_catalog
+  WHERE body_part <> '미분류'
+  ORDER BY name COLLATE NOCASE
+`);
+
+function getSuggestionCandidates() {
+  return selectSuggestionExercises.all().map(({ name, bodyPart }) => ({
+    name,
+    bodyPart,
+    recentExercise: getRecentExerciseSessions(name),
+    recentBodyPart: getRecentBodyPartSessions(bodyPart),
+  }));
+}
+
+async function generateWorkoutSuggestion() {
+  const candidates = getSuggestionCandidates();
+  if (!candidates.length) {
+    throw new Error("부위가 설정된 운동 종목이 없습니다.");
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY가 설정되지 않았습니다.");
+  }
+
+  const apiResponse = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-5.4-mini",
+      instructions: [
+        "당신은 한국어로 답하는 운동 기록 분석 도우미입니다.",
+        "제공된 후보 중 오늘 수행할 종목을 선택하세요.",
+        "선택한 종목과 같은 부위의 최근 기록을 근거로 세트별 중량과 횟수를 제안하세요.",
+        "기록이 적거나 오래됐다면 보수적으로 제안하고, 존재하지 않는 기록을 만들지 마세요.",
+        "종목명, 세트 구성, 간단한 이유를 읽기 쉽게 작성하세요.",
+      ].join(" "),
+      input: JSON.stringify({ today: new Date().toISOString(), candidates }),
+      max_output_tokens: 800,
+      store: false,
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  const result = await apiResponse.json();
+  if (!apiResponse.ok) {
+    const errorBody = await apiResponse.json().catch(() => ({}));
+    console.error("OpenAI 오류 상세:", {
+      status: apiResponse.status,
+      code: errorBody.error?.code,
+      type: errorBody.error?.type,
+    });
+    throw new Error(`OpenAI API 오류: HTTP ${apiResponse.status}`);
+  }
+
+  const suggestion = result.output
+    ?.flatMap((item) => item.type === "message" ? item.content ?? [] : [])
+    .filter((item) => item.type === "output_text")
+    .map((item) => item.text)
+    .join("\n")
+    .trim();
+
+  if (!suggestion) throw new Error("AI가 제안 내용을 반환하지 않았습니다.");
+  return suggestion;
 }
 
 function saveWorkout(completedAt, exercises) {
@@ -587,6 +671,41 @@ const httpServer = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/suggestions") {
+    const headers = {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    };
+
+    if (
+      !process.env.FITLOG_AI_TOKEN ||
+      request.headers.authorization !== `Bearer ${process.env.FITLOG_AI_TOKEN}`
+    ) {
+      response.writeHead(401, headers).end(
+        JSON.stringify({ error: "AI 기능 인증이 필요합니다." }),
+      );
+      return;
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      response.writeHead(503, headers).end(
+        JSON.stringify({ error: "OpenAI API 키가 설정되지 않았습니다." }),
+      );
+      return;
+    }
+
+    try {
+      const suggestion = await generateWorkoutSuggestion();
+      response.writeHead(200, headers).end(JSON.stringify({ suggestion }));
+    } catch (error) {
+      console.error("Workout suggestion failed:", error);
+      response.writeHead(502, headers).end(
+        JSON.stringify({ error: "AI 운동 제안을 생성하지 못했습니다." }),
+      );
+    }
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/insights") {
     const name = url.searchParams.get("exercise")?.trim();
     const headers = {
@@ -603,6 +722,7 @@ const httpServer = createServer(async (request, response) => {
 
     try {
       const recentExercise = getRecentExerciseSessions(name);
+      const progress = selectExerciseProgress.all(name);
       const bodyPart = selectBodyPartByName.get(name)?.bodyPart ?? "미분류";
       const recentBodyPart = bodyPart === "미분류"
         ? []
@@ -614,6 +734,7 @@ const httpServer = createServer(async (request, response) => {
           bodyPart,
           recentExercise,
           recentBodyPart,
+          progress,
         }),
       );
     } catch (error) {

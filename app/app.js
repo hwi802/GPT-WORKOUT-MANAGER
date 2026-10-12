@@ -112,11 +112,13 @@ const insightExercise = document.querySelector("#insight-exercise");
 const insightStatus = document.querySelector("#insight-status");
 const recentExerciseContainer = document.querySelector("#recent-exercise");
 const recentBodyPartContainer = document.querySelector("#recent-body-part");
+const progressChart = document.querySelector("#progress-chart");
 
 async function loadInsights() {
   const name = insightExercise.value;
   recentExerciseContainer.replaceChildren();
   recentBodyPartContainer.replaceChildren();
+  progressChart.replaceChildren();
 
   if (!name) {
     insightStatus.textContent = "운동 종목을 선택하세요.";
@@ -171,6 +173,29 @@ async function loadInsights() {
 if (!data.recentBodyPart.length) {
   recentBodyPartContainer.textContent = "같은 부위의 운동 기록이 없습니다.";
 }
+  const highestWeight = Math.max(1, ...data.progress.map((row) => row.maxWeight));
+
+for (const row of data.progress) {
+  const point = document.createElement("div");
+  point.className = "progress-point";
+  point.title = `총 운동량 ${row.totalVolume}kg`;
+
+  const bar = document.createElement("div");
+  bar.className = "progress-bar";
+  bar.style.height = `${Math.max(6, row.maxWeight / highestWeight * 120)}px`;
+
+  const date = new Date(row.completedAt).toLocaleDateString(
+    "ko-KR",
+    { timeZone: "Asia/Seoul", month: "numeric", day: "numeric" },
+  );
+  point.append(element("strong", `${row.maxWeight}kg`), bar, element("span", date));
+  progressChart.append(point);
+}
+
+if (!data.progress.length) {
+  progressChart.textContent = "표시할 운동 기록이 없습니다.";
+}
+
   } catch (error) {
     console.error(error);
     insightStatus.className = "error";
@@ -620,6 +645,41 @@ form.addEventListener("submit", async (event) => {
 refresh.addEventListener("click", loadWorkouts);
 reloadExercises.addEventListener("click", loadExerciseNames);
 addExerciseButton.addEventListener("click", () => addExerciseCard(true));
+
+const suggestionButton = document.querySelector("#suggest-workout");
+const suggestionStatus = document.querySelector("#suggestion-status");
+const suggestionResult = document.querySelector("#suggestion-result");
+const aiTokenInput = document.querySelector("#ai-token");
+
+suggestionButton.addEventListener("click", async () => {
+  const token = aiTokenInput.value.trim();
+  if (!token) {
+    suggestionStatus.textContent = "AI 기능 접근 토큰을 입력해주세요.";
+    aiTokenInput.focus();
+    return;
+  }
+
+  suggestionButton.disabled = true;
+  suggestionStatus.textContent = "운동 기록을 분석하고 있습니다.";
+  suggestionResult.textContent = "";
+
+  try {
+    const response = await fetch("/api/suggestions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "제안 요청에 실패했습니다.");
+
+    suggestionStatus.textContent = "오늘의 운동 제안을 받았습니다.";
+    suggestionResult.textContent = data.suggestion;
+  } catch (error) {
+    suggestionStatus.textContent = error.message;
+  } finally {
+    suggestionButton.disabled = false;
+  }
+});
+
 setCurrentKoreanTime();
 addExerciseCard();
 loadWorkouts();
