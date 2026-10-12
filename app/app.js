@@ -1,6 +1,8 @@
 const container = document.querySelector("#workouts");
 const status = document.querySelector("#status");
 const refresh = document.querySelector("#refresh");
+const monthSelect = document.querySelector("#workout-month");
+let availableMonths = [];
 
 const viewPanels = {
   workout: document.querySelector("#view-workout"),
@@ -104,37 +106,93 @@ function renderWorkout(workout) {
   return card;
 }
 
-async function loadWorkouts() {
+function monthLabel(month) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return `${year}년 ${monthNumber}월`;
+}
+
+async function loadWorkoutMonths() {
+  const previousMonth = monthSelect.value;
+  const response = await fetch("/api/workout-months", { cache: "no-store" });
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error ?? "운동 기록이 있는 월을 조회하지 못했습니다.");
+  }
+  if (!Array.isArray(data.months)) {
+    throw new Error("올바르지 않은 월 목록 응답입니다.");
+  }
+
+  availableMonths = data.months.filter(
+    (item) =>
+      item &&
+      typeof item.month === "string" &&
+      /^\d{4}-(?:0[1-9]|1[0-2])$/.test(item.month) &&
+      Number.isInteger(item.workoutCount) &&
+      item.workoutCount >= 0,
+  );
+  monthSelect.replaceChildren();
+
+  for (const item of availableMonths) {
+    const option = element(
+      "option",
+      `${monthLabel(item.month)} (${item.workoutCount}건)`,
+    );
+    option.value = item.month;
+    monthSelect.append(option);
+  }
+
+  if (!availableMonths.length) {
+    const option = element("option", "저장된 기록이 없습니다");
+    option.value = "";
+    monthSelect.append(option);
+    return "";
+  }
+
+  monthSelect.value = availableMonths.some(({ month }) => month === previousMonth)
+    ? previousMonth
+    : availableMonths[0].month;
+  return monthSelect.value;
+}
+
+async function loadWorkouts({ refreshMonths = false } = {}) {
   refresh.disabled = true;
+  monthSelect.disabled = true;
   status.className = "";
   status.textContent = "운동 기록을 불러오는 중입니다.";
   container.replaceChildren();
 
   try {
-    const response = await fetch("/api/workouts?limit=10", {
-      cache: "no-store",
-    });
+    const month = refreshMonths ? await loadWorkoutMonths() : monthSelect.value;
 
-    if (!response.ok) {
-      throw new Error(`조회 실패: HTTP ${response.status}`);
+    if (!month) {
+      status.textContent = "아직 저장된 운동 기록이 없습니다.";
+      return;
     }
 
-    const { workouts } = await response.json();
+    const response = await fetch(`/api/workouts?month=${encodeURIComponent(month)}`, {
+      cache: "no-store",
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? `조회 실패: HTTP ${response.status}`);
+    if (!Array.isArray(data.workouts)) throw new Error("올바르지 않은 운동 기록 응답입니다.");
+    const { workouts } = data;
 
     for (const workout of workouts) {
       container.append(renderWorkout(workout));
     }
 
     status.textContent = workouts.length
-      ? `최근 운동 ${workouts.length}건 · 한국 시간 기준`
-      : "아직 저장된 운동 기록이 없습니다.";
+      ? `${monthLabel(month)} 운동 ${workouts.length}건 · 최신 날짜순 · 한국 시간 기준`
+      : `${monthLabel(month)}에는 저장된 운동 기록이 없습니다.`;
   } catch (error) {
     console.error(error);
     status.className = "error";
-    status.textContent =
+    status.textContent = error.message ||
       "운동 기록을 불러오지 못했습니다. 서버 상태를 확인하고 다시 시도하세요.";
   } finally {
     refresh.disabled = saving;
+    monthSelect.disabled = saving || availableMonths.length === 0;
   }
 }
 
@@ -155,6 +213,124 @@ const insightStatus = document.querySelector("#insight-status");
 const recentExerciseContainer = document.querySelector("#recent-exercise");
 const recentBodyPartContainer = document.querySelector("#recent-body-part");
 const progressChart = document.querySelector("#progress-chart");
+
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+function svgElement(tag, attributes = {}, text = "") {
+  const node = document.createElementNS(SVG_NAMESPACE, tag);
+  for (const [name, value] of Object.entries(attributes)) {
+    node.setAttribute(name, value);
+  }
+  node.textContent = text;
+  return node;
+}
+
+function renderProgressChart(exerciseName, progress) {
+  progressChart.replaceChildren();
+
+  const points = progress
+    .map((row) => ({
+      ...row,
+      date: new Date(row.completedAt),
+      maxWeight: Number(row.maxWeight),
+      totalVolume: Number(row.totalVolume),
+    }))
+    .filter(
+      (row) =>
+        !Number.isNaN(row.date.getTime()) &&
+        Number.isFinite(row.maxWeight) &&
+        row.maxWeight >= 0,
+    );
+
+  if (!points.length) {
+    progressChart.textContent = "표시할 운동 기록이 없습니다.";
+    return;
+  }
+
+  const margin = { top: 34, right: 28, bottom: 50, left: 52 };
+  const height = 250;
+  const width = Math.max(360, points.length * 96 + margin.left + margin.right);
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const highestWeight = Math.max(1, ...points.map((row) => row.maxWeight));
+  const xFor = (index) => points.length === 1
+    ? margin.left + plotWidth / 2
+    : margin.left + (index / (points.length - 1)) * plotWidth;
+  const yFor = (weight) => margin.top + plotHeight * (1 - weight / highestWeight);
+
+  const svg = svgElement("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    width,
+    height,
+    role: "img",
+    "aria-label": `${exerciseName} 운동일별 최고 중량 선 그래프`,
+  });
+  svg.append(svgElement("title", {}, `${exerciseName} 운동일별 최고 중량 변화`));
+
+  for (let step = 0; step <= 4; step += 1) {
+    const weight = highestWeight * (step / 4);
+    const y = yFor(weight);
+    svg.append(
+      svgElement("line", {
+        x1: margin.left,
+        y1: y,
+        x2: width - margin.right,
+        y2: y,
+        class: "chart-grid-line",
+      }),
+      svgElement(
+        "text",
+        { x: margin.left - 8, y: y + 4, class: "chart-axis-label", "text-anchor": "end" },
+        `${Number(weight.toFixed(1))}kg`,
+      ),
+    );
+  }
+
+  const coordinates = points.map((row, index) => `${xFor(index)},${yFor(row.maxWeight)}`);
+  svg.append(svgElement("polyline", { points: coordinates.join(" "), class: "chart-line" }));
+
+  const shortDateFormatter = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "2-digit",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const fullDateFormatter = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    dateStyle: "long",
+  });
+
+  points.forEach((row, index) => {
+    const x = xFor(index);
+    const y = yFor(row.maxWeight);
+    const fullDate = fullDateFormatter.format(row.date);
+    const volume = Number.isFinite(row.totalVolume) ? `, 총 운동량 ${row.totalVolume}kg` : "";
+    const group = svgElement("g", {
+      class: "chart-point",
+      tabindex: "0",
+      role: "img",
+      "aria-label": `${fullDate}, 최고 중량 ${row.maxWeight}kg${volume}`,
+    });
+    group.append(
+      svgElement("title", {}, `${fullDate} · 최고 ${row.maxWeight}kg${volume}`),
+      svgElement("circle", { cx: x, cy: y, r: 6 }),
+      svgElement(
+        "text",
+        { x, y: Math.max(18, y - 11), class: "chart-value", "text-anchor": "middle" },
+        `${row.maxWeight}kg`,
+      ),
+      svgElement(
+        "text",
+        { x, y: height - 18, class: "chart-date", "text-anchor": "middle" },
+        shortDateFormatter.format(row.date),
+      ),
+    );
+    svg.append(group);
+  });
+
+  progressChart.append(svg);
+  progressChart.scrollLeft = progressChart.scrollWidth;
+}
 
 async function loadInsights() {
   const name = insightExercise.value;
@@ -215,28 +391,7 @@ async function loadInsights() {
 if (!data.recentBodyPart.length) {
   recentBodyPartContainer.textContent = "같은 부위의 운동 기록이 없습니다.";
 }
-  const highestWeight = Math.max(1, ...data.progress.map((row) => row.maxWeight));
-
-for (const row of data.progress) {
-  const point = document.createElement("div");
-  point.className = "progress-point";
-  point.title = `총 운동량 ${row.totalVolume}kg`;
-
-  const bar = document.createElement("div");
-  bar.className = "progress-bar";
-  bar.style.height = `${Math.max(6, row.maxWeight / highestWeight * 120)}px`;
-
-  const date = new Date(row.completedAt).toLocaleDateString(
-    "ko-KR",
-    { timeZone: "Asia/Seoul", month: "numeric", day: "numeric" },
-  );
-  point.append(element("strong", `${row.maxWeight}kg`), bar, element("span", date));
-  progressChart.append(point);
-}
-
-if (!data.progress.length) {
-  progressChart.textContent = "표시할 운동 기록이 없습니다.";
-}
+    renderProgressChart(name, data.progress);
 
   } catch (error) {
     console.error(error);
@@ -306,6 +461,7 @@ function setBusy(value) {
   saving = value;
   formFields.disabled = value;
   refresh.disabled = value;
+  monthSelect.disabled = value || availableMonths.length === 0;
   container.querySelectorAll(".edit-workout, .delete-workout").forEach((node) => {
     node.disabled = value;
   });
@@ -375,7 +531,7 @@ async function deleteWorkout(workout, dateLabel) {
       formStatus.textContent = "";
     }
     actionStatus.textContent = response.status === 404 ? "이미 삭제된 기록입니다. 목록을 갱신했습니다." : "운동 기록을 삭제했습니다.";
-    await Promise.all([loadWorkouts(), loadExerciseNames()]);
+    await Promise.all([loadWorkouts({ refreshMonths: true }), loadExerciseNames()]);
   } catch (error) {
     console.error(error);
     actionStatus.className = "error";
@@ -675,7 +831,7 @@ form.addEventListener("submit", async (event) => {
     if (!response.ok) throw new Error(result.error ?? "저장에 실패했습니다.");
     resetEditor();
     formStatus.textContent = updating ? "운동 기록을 수정했습니다." : `운동 ${exercises.length}종목을 저장했습니다.`;
-    await Promise.all([loadWorkouts(), loadExerciseNames()]);
+    await Promise.all([loadWorkouts({ refreshMonths: true }), loadExerciseNames()]);
   } catch (error) {
     console.error(error);
     formStatus.className = "error";
@@ -685,7 +841,8 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-refresh.addEventListener("click", loadWorkouts);
+refresh.addEventListener("click", () => loadWorkouts({ refreshMonths: true }));
+monthSelect.addEventListener("change", () => loadWorkouts());
 reloadExercises.addEventListener("click", loadExerciseNames);
 addExerciseButton.addEventListener("click", () => addExerciseCard(true));
 
@@ -768,5 +925,5 @@ weeklyAdviceButton.addEventListener("click", async () => {
 showView();
 setCurrentKoreanTime();
 addExerciseCard();
-loadWorkouts();
+loadWorkouts({ refreshMonths: true });
 loadExerciseNames();

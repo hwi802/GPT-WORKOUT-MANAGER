@@ -58,8 +58,14 @@
       <p class="muted view-description">지난 운동을 살펴보고 종목별 변화를 확인하세요.</p>
       <section class="history-section" aria-labelledby="history-title">
         <div class="section-heading">
-          <h2 id="history-title">최근 운동 기록</h2>
-          <button id="refresh" class="secondary" type="button">기록 새로고침</button>
+          <h2 id="history-title">월별 운동 기록</h2>
+          <div class="history-controls">
+            <label for="workout-month">조회할 월</label>
+            <select id="workout-month" disabled>
+              <option value="">기록을 불러오는 중입니다</option>
+            </select>
+            <button id="refresh" class="secondary" type="button">월 목록 새로고침</button>
+          </div>
         </div>
         <p id="action-status" role="status" aria-live="polite"></p>
         <p id="status" role="status"></p>
@@ -83,7 +89,8 @@
         <h3>같은 부위의 최근 7회</h3>
         <div id="recent-body-part"></div>
         <h3>종목별 최고 중량 변화</h3>
-        <div id="progress-chart" class="progress-chart"></div>
+        <p class="muted">각 점은 해당 운동일의 최고 중량입니다. 기록이 많으면 그래프를 좌우로 스크롤하세요.</p>
+        <div id="progress-chart" class="progress-chart" tabindex="0"></div>
         <p class="muted">보조 운동의 kg은 보조 중량입니다. 기구마다 중량 기준이 다를 수 있습니다.</p>
       </section>
       <section class="category-section" aria-labelledby="category-title">

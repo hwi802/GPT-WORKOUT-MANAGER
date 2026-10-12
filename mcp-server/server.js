@@ -51,6 +51,42 @@ const selectRecentWorkoutRows = db.prepare(`
     s.set_number ASC
 `);
 
+// 완료 시각은 UTC 오프셋이 포함된 ISO 문자열로 저장됩니다. 월별 화면에서는
+// 사용자가 보는 한국 시간(UTC+9)의 달을 기준으로 묶고 조회합니다.
+const selectWorkoutMonths = db.prepare(`
+  SELECT
+    strftime('%Y-%m', datetime(completed_at, '+9 hours')) AS month,
+    COUNT(*) AS workoutCount
+  FROM workouts
+  WHERE strftime('%Y-%m', datetime(completed_at, '+9 hours')) IS NOT NULL
+  GROUP BY month
+  ORDER BY month DESC
+`);
+
+const selectWorkoutRowsByMonth = db.prepare(`
+  SELECT
+    w.id AS workout_id,
+    w.completed_at AS completed_at,
+    e.id AS exercise_id,
+    e.name AS exercise_name,
+    e.exercise_order AS exercise_order,
+    s.id AS set_id,
+    s.set_number AS set_number,
+    s.weight AS weight,
+    s.reps AS reps
+  FROM workouts AS w
+  LEFT JOIN exercises AS e
+    ON e.workout_id = w.id
+  LEFT JOIN workout_sets AS s
+    ON s.exercise_id = e.id
+  WHERE strftime('%Y-%m', datetime(w.completed_at, '+9 hours')) = ?
+  ORDER BY
+    julianday(w.completed_at) DESC,
+    w.id DESC,
+    e.exercise_order ASC,
+    s.set_number ASC
+`);
+
 const selectLastSevenDaysWorkoutRows = db.prepare(`
   SELECT
     w.id AS workout_id,
@@ -251,6 +287,17 @@ function rowsToWorkouts(rows) {
 
 function getRecentWorkouts(limit) {
   return rowsToWorkouts(selectRecentWorkoutRows.all(limit));
+}
+
+function getWorkoutMonths() {
+  return selectWorkoutMonths.all().map(({ month, workoutCount }) => ({
+    month,
+    workoutCount: Number(workoutCount),
+  }));
+}
+
+function getWorkoutsByMonth(month) {
+  return rowsToWorkouts(selectWorkoutRowsByMonth.all(month));
 }
 
 function getLastSevenDaysWorkouts() {
@@ -830,14 +877,40 @@ const httpServer = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/workout-months") {
+    const headers = {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    };
+
+    try {
+      const months = getWorkoutMonths();
+      response.writeHead(200, headers).end(JSON.stringify({ months }));
+    } catch (error) {
+      console.error("Workout month lookup failed:", error);
+      response.writeHead(500, headers).end(
+        JSON.stringify({ error: "운동 기록이 있는 월을 조회하지 못했습니다." }),
+      );
+    }
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/workouts") {
+    const month = url.searchParams.get("month");
     const limit = Number(url.searchParams.get("limit") ?? 10);
     const headers = {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
     };
 
-    if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+    if (month !== null && !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)) {
+      response.writeHead(400, headers).end(
+        JSON.stringify({ error: "month는 YYYY-MM 형식이어야 합니다." }),
+      );
+      return;
+    }
+
+    if (month === null && (!Number.isInteger(limit) || limit < 1 || limit > 20)) {
       response.writeHead(400, headers).end(
         JSON.stringify({
           error: "limit은 1부터 20까지의 정수여야 합니다.",
@@ -847,9 +920,11 @@ const httpServer = createServer(async (request, response) => {
     }
 
     try {
-      const workouts = getRecentWorkouts(limit);
+      const workouts = month === null
+        ? getRecentWorkouts(limit)
+        : getWorkoutsByMonth(month);
       response.writeHead(200, headers).end(
-        JSON.stringify({ workouts }),
+        JSON.stringify(month === null ? { workouts } : { month, workouts }),
       );
     } catch (error) {
       console.error("Workout API failed:", error);

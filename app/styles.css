@@ -46,6 +46,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 #form-status { color: #166534; min-height: 26px; }
 .error, #status.error, #form-status.error { color: #b42318; }
 .history-section { margin-top: 38px; border-top: 1px solid #dde4ee; padding-top: 28px; }
+.history-controls { display: flex; align-items: end; gap: 8px; }
+.history-controls label { min-width: 190px; }
+.history-controls select { margin-top: 5px; }
+.history-controls button { white-space: nowrap; }
 .workout { padding: 24px; }
 .workout h2 { font-size: 18px; margin-bottom: 20px; }
 .workout h3 { margin-top: 24px; }
@@ -81,27 +85,20 @@ th { color: #64748b; background: #f8fafc; }
 }
 
 .progress-chart {
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
-  min-height: 180px;
+  min-height: 250px;
   overflow-x: auto;
-  padding: 16px 0;
+  padding: 8px 0 4px;
+  border-bottom: 1px solid #edf0f5;
+  overscroll-behavior-inline: contain;
 }
-
-.progress-point {
-  display: flex;
-  flex: 0 0 72px;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.progress-bar {
-  width: 40px;
-  background: #2563eb;
-  border-radius: 6px 6px 0 0;
-}
+.progress-chart svg { display: block; min-width: 100%; }
+.chart-grid-line { stroke: #dfe6ef; stroke-width: 1; }
+.chart-axis-label, .chart-date { fill: #64748b; font-size: 11px; }
+.chart-line { fill: none; stroke: #2563eb; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.chart-point circle { fill: #fff; stroke: #2563eb; stroke-width: 3; }
+.chart-point:focus { outline: none; }
+.chart-point:focus circle { fill: #dbeafe; stroke: #1d4ed8; stroke-width: 4; }
+.chart-value { fill: #172033; font-size: 12px; font-weight: 700; }
 
 #suggestion-result {
   white-space: pre-wrap;
@@ -160,4 +157,9 @@ th { color: #64748b; background: #f8fafc; }
   .view-nav { gap: 4px; }
   .view-nav a { flex: 1 1 30%; padding: 10px 6px; font-size: 14px; }
   .category-section, .insights-section, .coach-section { padding: 18px; }
+  #view-records .section-heading { align-items: stretch; flex-direction: column; }
+  .history-controls { align-items: stretch; flex-wrap: wrap; }
+  .history-controls label { flex: 1 1 100%; min-width: 0; }
+  .history-controls button { flex: 1 1 100%; }
+  .progress-chart { margin-right: -18px; padding-right: 18px; }
 }
