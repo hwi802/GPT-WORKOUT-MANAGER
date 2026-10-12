@@ -213,6 +213,12 @@ const insightStatus = document.querySelector("#insight-status");
 const recentExerciseContainer = document.querySelector("#recent-exercise");
 const recentBodyPartContainer = document.querySelector("#recent-body-part");
 const progressChart = document.querySelector("#progress-chart");
+const adviceExercise = document.querySelector("#advice-exercise");
+const reloadAdviceExercises = document.querySelector("#reload-advice-exercises");
+const exerciseAdviceButton = document.querySelector("#exercise-advice");
+const exerciseAdviceStatus = document.querySelector("#exercise-advice-status");
+const exerciseAdviceResult = document.querySelector("#exercise-advice-result");
+let requestingExerciseAdvice = false;
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
@@ -585,8 +591,24 @@ function populateHistory(select) {
   if (exerciseNames.includes(selected)) select.value = selected;
 }
 
+function populateExerciseDropdown(select, selected) {
+  select.replaceChildren();
+  const placeholder = element("option", "종목을 선택하세요");
+  placeholder.value = "";
+  select.append(placeholder);
+
+  for (const name of exerciseNames) {
+    const option = element("option", name);
+    option.value = name;
+    select.append(option);
+  }
+
+  select.value = exerciseNames.includes(selected) ? selected : "";
+}
+
 async function loadExerciseNames() {
   reloadExercises.disabled = true;
+  reloadAdviceExercises.disabled = true;
   catalogStatus.className = "muted";
   catalogStatus.textContent = "이전에 수행한 운동 종목을 불러오는 중입니다.";
   try {
@@ -598,42 +620,23 @@ async function loadExerciseNames() {
     }
     exerciseNames = data.exercises;
     exerciseCatalog = new Map(
-  (data.catalog ?? []).map(({ name, bodyPart }) => [name, bodyPart]),
-);
+      (data.catalog ?? []).map(({ name, bodyPart }) => [name, bodyPart]),
+    );
 
-const previousSelection = categoryExercise.value;
-categoryExercise.replaceChildren();
+    const previousCategorySelection = categoryExercise.value;
+    const previousInsightSelection = insightExercise.value;
+    const previousAdviceSelection = adviceExercise.value;
+    populateExerciseDropdown(categoryExercise, previousCategorySelection);
+    populateExerciseDropdown(insightExercise, previousInsightSelection);
+    populateExerciseDropdown(adviceExercise, previousAdviceSelection);
+    showSelectedBodyPart();
 
-const placeholder = element("option", "종목을 선택하세요");
-placeholder.value = "";
-categoryExercise.append(placeholder);
-
-for (const name of exerciseNames) {
-  const option = element("option", name);
-  option.value = name;
-  categoryExercise.append(option);
-}
-
-categoryExercise.value = exerciseNames.includes(previousSelection)
-  ? previousSelection
-  : "";
-showSelectedBodyPart();
-const previousInsightSelection = insightExercise.value;
-insightExercise.replaceChildren();
-
-const insightPlaceholder = element("option", "종목을 선택하세요");
-insightPlaceholder.value = "";
-insightExercise.append(insightPlaceholder);
-
-for (const name of exerciseNames) {
-  const option = element("option", name);
-  option.value = name;
-  insightExercise.append(option);
-}
-
-insightExercise.value = exerciseNames.includes(previousInsightSelection)
-  ? previousInsightSelection
-  : "";
+    exerciseAdviceResult.replaceChildren();
+    exerciseAdviceStatus.className = "";
+    exerciseAdviceStatus.textContent = exerciseNames.length
+      ? "운동 종목을 선택한 뒤 조언받기 버튼을 누르세요."
+      : "조언에 사용할 저장된 운동 기록이 없습니다.";
+    exerciseAdviceButton.disabled = !adviceExercise.value;
 
     cards.querySelectorAll(".exercise-history").forEach(populateHistory);
     catalogStatus.textContent = exerciseNames.length
@@ -643,8 +646,11 @@ insightExercise.value = exerciseNames.includes(previousInsightSelection)
     console.error(error);
     catalogStatus.className = "error";
     catalogStatus.textContent = "종목 목록을 갱신하지 못했습니다. 직접 입력하거나 다시 불러오세요.";
+    exerciseAdviceStatus.className = "error";
+    exerciseAdviceStatus.textContent = "종목 목록을 갱신하지 못했습니다.";
   } finally {
     reloadExercises.disabled = false;
+    reloadAdviceExercises.disabled = requestingExerciseAdvice;
   }
 }
 
@@ -850,6 +856,151 @@ const suggestionButton = document.querySelector("#suggest-workout");
 const suggestionStatus = document.querySelector("#suggestion-status");
 const suggestionResult = document.querySelector("#suggestion-result");
 const aiTokenInput = document.querySelector("#ai-token");
+
+function renderExerciseAdvice({ advice, context }) {
+  if (
+    !advice ||
+    typeof advice.exerciseName !== "string" ||
+    !Array.isArray(advice.sets) ||
+    !context
+  ) {
+    throw new Error("올바르지 않은 종목별 조언 응답입니다.");
+  }
+
+  const card = element("article", "");
+  card.className = "advice-card";
+  card.append(element("h4", advice.exerciseName));
+
+  const meta = element(
+    "p",
+    `근거: 선택 종목 최근 ${context.exerciseSessionCount}회` +
+      (context.bodyPart === "미분류"
+        ? " · 부위 미분류"
+        : ` · ${context.bodyPart} 부위 최근 ${context.sameBodySessionCount}회`),
+  );
+  meta.className = "advice-meta";
+  card.append(meta);
+
+  if (context.isAssistedWeight) {
+    const assistedNote = element(
+      "p",
+      "이 종목의 kg은 보조 중량입니다. 값이 클수록 더 많은 도움을 뜻할 수 있습니다.",
+    );
+    assistedNote.className = "advice-notice";
+    card.append(assistedNote);
+  }
+
+  const table = document.createElement("table");
+  const header = table.createTHead().insertRow();
+  for (const title of ["세트", "권장 중량 (kg)", "권장 반복 횟수"]) {
+    const cell = element("th", title);
+    cell.scope = "col";
+    header.append(cell);
+  }
+  const body = table.createTBody();
+  for (const set of advice.sets) {
+    if (
+      !Number.isInteger(set.setNumber) ||
+      !Number.isFinite(set.weightKg) ||
+      !Number.isInteger(set.reps)
+    ) {
+      throw new Error("올바르지 않은 권장 세트 응답입니다.");
+    }
+    const row = body.insertRow();
+    row.append(
+      element("td", set.setNumber),
+      element("td", set.weightKg),
+      element("td", `${set.reps}회`),
+    );
+  }
+  card.append(table);
+
+  const reason = element("p", advice.reason);
+  reason.className = "advice-reason";
+  reason.prepend(element("strong", "제안 이유: "));
+  card.append(reason);
+
+  const cautions = [
+    ...(Array.isArray(context.limitations) ? context.limitations : []),
+    advice.caution,
+  ].filter((text, index, values) => text && values.indexOf(text) === index);
+  if (cautions.length) {
+    const cautionBox = element("div", "");
+    cautionBox.className = "advice-cautions";
+    cautionBox.append(element("strong", "확인할 점"));
+    const list = document.createElement("ul");
+    for (const caution of cautions) list.append(element("li", caution));
+    cautionBox.append(list);
+    card.append(cautionBox);
+  }
+
+  exerciseAdviceResult.replaceChildren(card);
+}
+
+adviceExercise.addEventListener("change", () => {
+  exerciseAdviceResult.replaceChildren();
+  exerciseAdviceStatus.className = "";
+  exerciseAdviceStatus.textContent = adviceExercise.value
+    ? "선택 종목 조언받기 버튼을 누르면 최근 기록을 분석합니다."
+    : "운동 종목을 선택하세요.";
+  exerciseAdviceButton.disabled = !adviceExercise.value;
+});
+
+reloadAdviceExercises.addEventListener("click", loadExerciseNames);
+
+exerciseAdviceButton.addEventListener("click", async () => {
+  const exerciseName = adviceExercise.value;
+  const token = aiTokenInput.value.trim();
+
+  if (!exerciseName) {
+    exerciseAdviceStatus.className = "error";
+    exerciseAdviceStatus.textContent = "조언받을 운동 종목을 선택해주세요.";
+    adviceExercise.focus();
+    return;
+  }
+  if (!token) {
+    exerciseAdviceStatus.className = "error";
+    exerciseAdviceStatus.textContent = "AI 기능 접근 토큰을 입력해주세요.";
+    aiTokenInput.focus();
+    return;
+  }
+
+  requestingExerciseAdvice = true;
+  exerciseAdviceButton.disabled = true;
+  adviceExercise.disabled = true;
+  reloadAdviceExercises.disabled = true;
+  exerciseAdviceStatus.className = "";
+  exerciseAdviceStatus.textContent = `${exerciseName} 최근 기록을 분석하고 있습니다.`;
+  exerciseAdviceResult.replaceChildren();
+
+  try {
+    const response = await fetch("/api/exercise-advice", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ exerciseName }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error ?? "종목별 조언 요청에 실패했습니다.");
+    }
+
+    renderExerciseAdvice(data);
+    exerciseAdviceStatus.textContent =
+      `${exerciseName} 최근 기록 ${data.context.exerciseSessionCount}회를 바탕으로 조언했습니다.`;
+  } catch (error) {
+    console.error(error);
+    exerciseAdviceStatus.className = "error";
+    exerciseAdviceStatus.textContent = error.message;
+  } finally {
+    requestingExerciseAdvice = false;
+    adviceExercise.disabled = false;
+    reloadAdviceExercises.disabled = false;
+    exerciseAdviceButton.disabled = !adviceExercise.value;
+  }
+});
 
 suggestionButton.addEventListener("click", async () => {
   const token = aiTokenInput.value.trim();

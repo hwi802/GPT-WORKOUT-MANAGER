@@ -386,15 +386,16 @@ function getSuggestionCandidates() {
   }));
 }
 
-async function generateWorkoutSuggestion(weeklyWorkouts = null) {
-  const isWeekly = weeklyWorkouts !== null;
-  if (isWeekly && weeklyWorkouts.length === 0) return null;
+function extractOpenAIText(result) {
+  return result.output
+    ?.flatMap((item) => item.type === "message" ? item.content ?? [] : [])
+    .filter((item) => item.type === "output_text")
+    .map((item) => item.text)
+    .join("\n")
+    .trim();
+}
 
-  const candidates = isWeekly ? [] : getSuggestionCandidates();
-  if (!isWeekly && !candidates.length) {
-    throw new Error("부위가 설정된 운동 종목이 없습니다.");
-  }
-
+async function requestOpenAIResponse(body) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY가 설정되지 않았습니다.");
@@ -406,38 +407,16 @@ async function generateWorkoutSuggestion(weeklyWorkouts = null) {
       authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({
-      model: "gpt-5.4-mini",
-      instructions: [
-        "당신은 한국어로 답하는 운동 기록 분석 도우미입니다.",
-        ...(isWeekly
-          ? [
-            "입력에는 최근 7일에 저장된 운동 기록만 있습니다.",
-            "운동 빈도와 종목별 세트, 중량, 반복 횟수를 근거로 현재 수행 수준을 설명하세요.",
-            "개선할 점과 다음 운동에 적용할 구체적인 조언 2~3개를 제시하세요.",
-            "기록이 없는 날을 휴식한 날로 단정하지 마세요.",
-            "이 데이터만으로 장기적인 성장이나 건강 상태를 단정하지 마세요.",
-          ]
-          : [
-            "제공된 후보 중 오늘 수행할 종목을 선택하세요.",
-            "선택한 종목과 같은 부위의 최근 기록을 근거로 세트별 중량과 횟수를 제안하세요.",
-            "기록이 적거나 오래됐다면 보수적으로 제안하세요.",
-            "종목명, 세트 구성, 간단한 이유를 읽기 쉽게 작성하세요.",
-          ]),
-        "존재하지 않는 기록을 만들지 마세요.",
-        "마크다운 기호 없이 일반 텍스트로 작성하세요.",
-      ].join(" "),
-      input: JSON.stringify({
-        today: new Date().toISOString(),
-        ...(isWeekly ? { workouts: weeklyWorkouts } : { candidates }),
-      }),
-      max_output_tokens: 800,
-      store: false,
-    }),
+    body: JSON.stringify({ ...body, store: false }),
     signal: AbortSignal.timeout(30000),
   });
 
-  const result = await apiResponse.json();
+  let result;
+  try {
+    result = await apiResponse.json();
+  } catch {
+    result = {};
+  }
 
   if (!apiResponse.ok) {
     console.error("OpenAI 오류 상세:", {
@@ -448,12 +427,188 @@ async function generateWorkoutSuggestion(weeklyWorkouts = null) {
     throw new Error(`OpenAI API 오류: HTTP ${apiResponse.status}`);
   }
 
-  const suggestion = result.output
-    ?.flatMap((item) => item.type === "message" ? item.content ?? [] : [])
-    .filter((item) => item.type === "output_text")
-    .map((item) => item.text)
-    .join("\n")
-    .trim();
+  return result;
+}
+
+function isAssistedExerciseName(name) {
+  return /\bassist(?:ed)?\b|보조/i.test(name);
+}
+
+function buildExerciseAdviceContext(exerciseName) {
+  const recentExercise = getRecentExerciseSessions(exerciseName);
+  const bodyPart = selectBodyPartByName.get(exerciseName)?.bodyPart ?? "미분류";
+  const recentBodyPart = bodyPart === "미분류"
+    ? []
+    : getRecentBodyPartSessions(bodyPart);
+  const lastPerformedAt = recentExercise[0]?.completedAt ?? null;
+  const lastPerformedTime = lastPerformedAt ? Date.parse(lastPerformedAt) : NaN;
+  const daysSinceLastSession = Number.isFinite(lastPerformedTime)
+    ? Math.max(0, Math.floor((Date.now() - lastPerformedTime) / (24 * 60 * 60 * 1000)))
+    : null;
+  const limitations = [];
+
+  if (recentExercise.length > 0 && recentExercise.length < 3) {
+    limitations.push(`선택 종목 기록이 ${recentExercise.length}회뿐이어서 보수적인 제안입니다.`);
+  }
+  if (daysSinceLastSession !== null && daysSinceLastSession > 30) {
+    limitations.push(`마지막 기록이 ${daysSinceLastSession}일 전이어서 현재 수행 능력과 차이가 있을 수 있습니다.`);
+  }
+  if (bodyPart === "미분류") {
+    limitations.push("운동 부위가 미분류라 선택 종목의 기록만 사용했습니다.");
+  }
+
+  return {
+    exerciseName,
+    bodyPart,
+    isAssistedWeight: isAssistedExerciseName(exerciseName),
+    selectedExerciseSessions: recentExercise.map(({ completedAt, sets }) => ({
+      completedAt,
+      sets,
+    })),
+    sameBodySessions: recentBodyPart.map(({ completedAt, exercises }) => ({
+      completedAt,
+      exercises,
+    })),
+    summary: {
+      bodyPart,
+      exerciseSessionCount: recentExercise.length,
+      sameBodySessionCount: recentBodyPart.length,
+      lastPerformedAt,
+      isAssistedWeight: isAssistedExerciseName(exerciseName),
+      limitations,
+    },
+  };
+}
+
+const exerciseAdviceSchema = z.object({
+  exerciseName: z.string().trim().min(1).max(100),
+  sets: z.array(
+    z.object({
+      setNumber: z.number().int().min(1).max(10),
+      weightKg: z.number().finite().min(0),
+      reps: z.number().int().min(1).max(100),
+    }).strict(),
+  ).min(1).max(10),
+  reason: z.string().trim().min(1).max(1000),
+  caution: z.string().trim().max(1000),
+}).strict();
+
+async function generateExerciseAdvice(context) {
+  const result = await requestOpenAIResponse({
+    model: "gpt-5.4-mini",
+    instructions: [
+      "당신은 한국어로 답하는 운동 기록 분석 도우미입니다.",
+      "입력의 selectedExerciseSessions와 sameBodySessions에는 실제 저장된 최근 최대 7회 기록만 있습니다.",
+      "존재하지 않는 과거 기록, 날짜, 중량, 반복 횟수를 만들어내지 마세요.",
+      "선택 종목의 다음 1회 운동에 적용할 세트별 중량(kg)과 반복 횟수를 제안하세요.",
+      "제안 중량은 동일한 종목명의 selectedExerciseSessions만 근거로 정하세요.",
+      "sameBodySessions는 최근 운동 빈도와 피로 맥락에만 사용하고, 다른 종목·다른 기구·한쪽당 중량을 선택 종목 중량과 직접 비교하지 마세요.",
+      "기록이 3회 미만이거나 마지막 기록이 오래됐다면 중량 증가를 피하고 보수적으로 제안하며 그 한계를 caution에 적으세요.",
+      "isAssistedWeight가 true이면 kg은 들어 올린 중량이 아니라 보조 중량입니다. 보조 중량이 클수록 더 많은 도움일 수 있으므로 일반 중량처럼 해석하지 마세요.",
+      "exerciseName은 입력의 exerciseName과 정확히 같아야 하고, reason은 실제 기록을 근거로 짧게 작성하세요.",
+      "의료적 판단을 하지 말고, 통증이나 이상 증상이 있으면 운동을 중단하고 전문가와 상의하도록 caution에 안내하세요.",
+    ].join(" "),
+    input: JSON.stringify({
+      today: new Date().toISOString(),
+      exerciseName: context.exerciseName,
+      bodyPart: context.bodyPart,
+      isAssistedWeight: context.isAssistedWeight,
+      selectedExerciseSessions: context.selectedExerciseSessions,
+      sameBodySessions: context.sameBodySessions,
+      dataLimitations: context.summary.limitations,
+    }),
+    text: {
+      format: {
+        type: "json_schema",
+        name: "exercise_advice",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            exerciseName: { type: "string" },
+            sets: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  setNumber: { type: "integer", minimum: 1, maximum: 10 },
+                  weightKg: { type: "number", minimum: 0 },
+                  reps: { type: "integer", minimum: 1, maximum: 100 },
+                },
+                required: ["setNumber", "weightKg", "reps"],
+                additionalProperties: false,
+              },
+            },
+            reason: { type: "string" },
+            caution: { type: "string" },
+          },
+          required: ["exerciseName", "sets", "reason", "caution"],
+          additionalProperties: false,
+        },
+      },
+    },
+    max_output_tokens: 800,
+  });
+
+  const outputText = extractOpenAIText(result);
+  if (!outputText) throw new Error("AI가 종목별 조언을 반환하지 않았습니다.");
+
+  let parsedJson;
+  try {
+    parsedJson = JSON.parse(outputText);
+  } catch {
+    throw new Error("AI가 올바른 조언 형식을 반환하지 않았습니다.");
+  }
+
+  const parsed = exerciseAdviceSchema.safeParse(parsedJson);
+  if (!parsed.success || parsed.data.exerciseName !== context.exerciseName) {
+    throw new Error("AI가 올바른 종목별 조언을 반환하지 않았습니다.");
+  }
+  if (parsed.data.sets.some((set, index) => set.setNumber !== index + 1)) {
+    throw new Error("AI가 세트 순서를 올바르게 반환하지 않았습니다.");
+  }
+
+  return parsed.data;
+}
+
+async function generateWorkoutSuggestion(weeklyWorkouts = null) {
+  const isWeekly = weeklyWorkouts !== null;
+  if (isWeekly && weeklyWorkouts.length === 0) return null;
+
+  const candidates = isWeekly ? [] : getSuggestionCandidates();
+  if (!isWeekly && !candidates.length) {
+    throw new Error("부위가 설정된 운동 종목이 없습니다.");
+  }
+
+  const result = await requestOpenAIResponse({
+    model: "gpt-5.4-mini",
+    instructions: [
+      "당신은 한국어로 답하는 운동 기록 분석 도우미입니다.",
+      ...(isWeekly
+        ? [
+          "입력에는 최근 7일에 저장된 운동 기록만 있습니다.",
+          "운동 빈도와 종목별 세트, 중량, 반복 횟수를 근거로 현재 수행 수준을 설명하세요.",
+          "개선할 점과 다음 운동에 적용할 구체적인 조언 2~3개를 제시하세요.",
+          "기록이 없는 날을 휴식한 날로 단정하지 마세요.",
+          "이 데이터만으로 장기적인 성장이나 건강 상태를 단정하지 마세요.",
+        ]
+        : [
+          "제공된 후보 중 오늘 수행할 종목을 선택하세요.",
+          "선택한 종목과 같은 부위의 최근 기록을 근거로 세트별 중량과 횟수를 제안하세요.",
+          "기록이 적거나 오래됐다면 보수적으로 제안하세요.",
+          "종목명, 세트 구성, 간단한 이유를 읽기 쉽게 작성하세요.",
+        ]),
+      "존재하지 않는 기록을 만들지 마세요.",
+      "마크다운 기호 없이 일반 텍스트로 작성하세요.",
+    ].join(" "),
+    input: JSON.stringify({
+      today: new Date().toISOString(),
+      ...(isWeekly ? { workouts: weeklyWorkouts } : { candidates }),
+    }),
+    max_output_tokens: 800,
+  });
+
+  const suggestion = extractOpenAIText(result);
 
   if (!suggestion) throw new Error("AI가 제안 내용을 반환하지 않았습니다.");
   return suggestion.replaceAll("**", "");
@@ -777,7 +932,11 @@ const httpServer = createServer(async (request, response) => {
 
   if (
     request.method === "POST" &&
-    (url.pathname === "/api/suggestions" || url.pathname === "/api/weekly-advice")
+    (
+      url.pathname === "/api/suggestions" ||
+      url.pathname === "/api/weekly-advice" ||
+      url.pathname === "/api/exercise-advice"
+    )
   ) {
     const headers = {
       "content-type": "application/json; charset=utf-8",
@@ -791,6 +950,78 @@ const httpServer = createServer(async (request, response) => {
       response.writeHead(401, headers).end(
         JSON.stringify({ error: "AI 기능 인증이 필요합니다." }),
       );
+      return;
+    }
+
+    if (url.pathname === "/api/exercise-advice") {
+      const chunks = [];
+      let size = 0;
+
+      try {
+        for await (const chunk of request) {
+          size += chunk.length;
+          if (size > 4096) {
+            response.writeHead(413, headers).end(
+              JSON.stringify({ error: "입력 데이터가 너무 큽니다." }),
+            );
+            return;
+          }
+          chunks.push(chunk);
+        }
+      } catch {
+        response.writeHead(400, headers).end(
+          JSON.stringify({ error: "요청을 읽지 못했습니다." }),
+        );
+        return;
+      }
+
+      let input;
+      try {
+        input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        response.writeHead(400, headers).end(
+          JSON.stringify({ error: "올바른 JSON 형식이 아닙니다." }),
+        );
+        return;
+      }
+
+      const parsed = z.object({
+        exerciseName: z.string().trim().min(1).max(100),
+      }).strict().safeParse(input);
+
+      if (!parsed.success) {
+        response.writeHead(400, headers).end(
+          JSON.stringify({ error: "조언받을 운동 종목을 선택해주세요." }),
+        );
+        return;
+      }
+
+      const context = buildExerciseAdviceContext(parsed.data.exerciseName);
+      if (!context.selectedExerciseSessions.length) {
+        response.writeHead(404, headers).end(
+          JSON.stringify({ error: "선택한 종목의 저장된 운동 기록이 없습니다." }),
+        );
+        return;
+      }
+
+      if (!process.env.OPENAI_API_KEY) {
+        response.writeHead(503, headers).end(
+          JSON.stringify({ error: "OpenAI API 키가 설정되지 않았습니다." }),
+        );
+        return;
+      }
+
+      try {
+        const advice = await generateExerciseAdvice(context);
+        response.writeHead(200, headers).end(
+          JSON.stringify({ advice, context: context.summary }),
+        );
+      } catch (error) {
+        console.error("Exercise advice failed:", error);
+        response.writeHead(502, headers).end(
+          JSON.stringify({ error: "종목별 운동 조언을 생성하지 못했습니다." }),
+        );
+      }
       return;
     }
 

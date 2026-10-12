@@ -104,8 +104,10 @@ th { color: #64748b; background: #f8fafc; }
   white-space: pre-wrap;
 }
 
-.weekly-advice {
+.weekly-advice, .coach-feature {
   margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid #e1e6ef;
 }
 
 #weekly-result {
@@ -152,7 +154,18 @@ th { color: #64748b; background: #f8fafc; }
 .coach-section { margin-top: 0; }
 .coach-section h3 { margin: 24px 0 8px; }
 .coach-section #ai-token { max-width: 420px; }
-.coach-section #suggestion-result, .coach-section #weekly-result { overflow-wrap: anywhere; }
+.coach-section #suggestion-result, .coach-section #weekly-result, .exercise-advice-result { overflow-wrap: anywhere; }
+.advice-picker { display: grid; grid-template-columns: minmax(0, 420px) auto; align-items: end; gap: 10px; }
+.advice-picker button { margin-top: 8px; }
+.advice-card { margin-top: 18px; padding: 20px; border: 1px solid #d8e1ee; border-radius: 12px; background: #f8fafc; }
+.advice-card h4 { margin: 0 0 8px; font-size: 19px; }
+.advice-meta { margin: 0 0 16px; color: #64748b; font-size: 14px; }
+.advice-notice, .advice-cautions { padding: 12px 14px; border-radius: 8px; background: #fff7df; color: #714d00; }
+.advice-notice { margin: 0 0 16px; }
+.advice-reason { margin: 18px 0 0; }
+.advice-cautions { margin-top: 14px; }
+.advice-cautions ul { margin: 8px 0 0; padding-left: 20px; }
+.advice-cautions li + li { margin-top: 6px; }
 @media (max-width: 680px) {
   .view-nav { gap: 4px; }
   .view-nav a { flex: 1 1 30%; padding: 10px 6px; font-size: 14px; }
@@ -162,4 +175,7 @@ th { color: #64748b; background: #f8fafc; }
   .history-controls label { flex: 1 1 100%; min-width: 0; }
   .history-controls button { flex: 1 1 100%; }
   .progress-chart { margin-right: -18px; padding-right: 18px; }
+  .advice-picker { grid-template-columns: 1fr; }
+  .advice-picker button { width: 100%; }
+  .advice-card { padding: 16px; overflow-x: auto; }
 }
